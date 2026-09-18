@@ -1,0 +1,29 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---- 上游参考快照（未附许可证，不随仓库分发；见 来源出处与许可.md）----
+refs/
+
+# ---- 曲目原始扫描图与像素重建中间产物（体积大 / 版权不确定）----
+hd/
+crops/
+clusters*.pkl
+dc.npy
+song_raw.json
+song_sys.json
+reparse_debug.json
+
+# ---- 运行时产物（每次跑都会重新生成）----
+__chk_*/
+_chk/
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*.tmp

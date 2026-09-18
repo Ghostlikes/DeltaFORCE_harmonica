@@ -1,0 +1,26 @@
+[selftest] 焦点窗口=. t0=1789733768.484
+[diag]  0.29s fg=198782 title='三角洲行动  ' events=0
+[diag]  0.80s fg=198782 title='三角洲行动  ' events=0
+[diag]  1.31s fg=198782 title='三角洲行动  ' events=0
+[diag]  1.82s fg=198782 title='三角洲行动  ' events=0
+[diag]  2.33s fg=198782 title='三角洲行动  ' events=0
+[diag]  2.84s fg=198782 title='三角洲行动  ' events=0
+[diag]  3.35s fg=198782 title='三角洲行动  ' events=0
+[diag]  3.86s fg=134074 title='Hermes' events=0
+[diag]  4.37s fg=134074 title='Hermes' events=0
+[diag]  4.87s fg=134074 title='Hermes' events=0
+[selftest] 4.99s 失去焦点，重新抢占
+[selftest] 5.25s 失去焦点，重新抢占
+[diag]  5.37s fg=134074 title='Hermes' events=0
+[selftest] 5.51s 失去焦点，重新抢占
+[selftest] 5.77s 失去焦点，重新抢占
+[diag]  5.88s fg=134074 title='Hermes' events=0
+[selftest] 6.03s 失去焦点，重新抢占
+[selftest] 6.30s 失去焦点，重新抢占
+[diag]  6.39s fg=134074 title='Hermes' events=0
+[selftest] 6.56s 失去焦点，重新抢占
+[selftest] 6.82s 失去焦点，重新抢占
+[diag]  6.90s fg=134074 title='Hermes' events=0
+[selftest] 7.08s 失去焦点，重新抢占
+[diag]  7.40s fg=331072 title='input selftest' events=0
+共收到 0 个输入事件:

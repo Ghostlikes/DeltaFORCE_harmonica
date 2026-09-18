@@ -1,0 +1,1133 @@
+{
+ "title": "天空之城",
+ "bpm": 87.0,
+ "meter": "4/4",
+ "key": "1=C",
+ "beats_per_measure": 4.0,
+ "base_octave": 4,
+ "transpose": 0,
+ "source": "songs/天空之城.jianpu",
+ "fmt": "简谱",
+ "measures": [
+  {
+   "index": 1,
+   "beats": 1.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 0.5,
+     "key": "N",
+     "mods": [
+      "left"
+     ],
+     "note": ",6"
+    },
+    {
+     "beat": 0.5,
+     "beats": 0.5,
+     "key": "M",
+     "mods": [
+      "left"
+     ],
+     "note": ",7"
+    }
+   ],
+   "start_beat": 0.0,
+   "confident": true
+  },
+  {
+   "index": 2,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 1.5,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    },
+    {
+     "beat": 1.5,
+     "beats": 0.5,
+     "key": "M",
+     "mods": [
+      "left"
+     ],
+     "note": ",7"
+    },
+    {
+     "beat": 2.0,
+     "beats": 1.0,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    },
+    {
+     "beat": 3.0,
+     "beats": 1.0,
+     "key": "C",
+     "mods": [],
+     "note": "3"
+    }
+   ],
+   "start_beat": 1.0,
+   "confident": true
+  },
+  {
+   "index": 3,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 3.0,
+     "key": "M",
+     "mods": [
+      "left"
+     ],
+     "note": ",7"
+    },
+    {
+     "beat": 3.0,
+     "beats": 1.0,
+     "key": "C",
+     "mods": [
+      "left"
+     ],
+     "note": ",3"
+    }
+   ],
+   "start_beat": 5.0,
+   "confident": true
+  },
+  {
+   "index": 4,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 1.5,
+     "key": "N",
+     "mods": [
+      "left"
+     ],
+     "note": ",6"
+    },
+    {
+     "beat": 1.5,
+     "beats": 0.5,
+     "key": "B",
+     "mods": [
+      "left"
+     ],
+     "note": ",5"
+    },
+    {
+     "beat": 2.0,
+     "beats": 1.0,
+     "key": "N",
+     "mods": [
+      "left"
+     ],
+     "note": ",6"
+    },
+    {
+     "beat": 3.0,
+     "beats": 1.0,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    }
+   ],
+   "start_beat": 9.0,
+   "confident": true
+  },
+  {
+   "index": 5,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 3.0,
+     "key": "B",
+     "mods": [
+      "left"
+     ],
+     "note": ",5"
+    },
+    {
+     "beat": 3.0,
+     "beats": 1.0,
+     "key": "C",
+     "mods": [
+      "left"
+     ],
+     "note": ",3"
+    }
+   ],
+   "start_beat": 13.0,
+   "confident": true
+  },
+  {
+   "index": 6,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 1.5,
+     "key": "V",
+     "mods": [
+      "left"
+     ],
+     "note": ",4"
+    },
+    {
+     "beat": 1.5,
+     "beats": 0.5,
+     "key": "C",
+     "mods": [
+      "left"
+     ],
+     "note": ",3"
+    },
+    {
+     "beat": 2.0,
+     "beats": 0.5,
+     "key": "V",
+     "mods": [
+      "left"
+     ],
+     "note": ",4"
+    },
+    {
+     "beat": 2.5,
+     "beats": 1.5,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    }
+   ],
+   "start_beat": 17.0,
+   "confident": true
+  },
+  {
+   "index": 7,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 3.0,
+     "key": "C",
+     "mods": [
+      "left"
+     ],
+     "note": ",3"
+    },
+    {
+     "beat": 3.0,
+     "beats": 1.0,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    }
+   ],
+   "start_beat": 21.0,
+   "confident": true
+  },
+  {
+   "index": 8,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 1.5,
+     "key": "M",
+     "mods": [
+      "left"
+     ],
+     "note": ",7"
+    },
+    {
+     "beat": 1.5,
+     "beats": 0.5,
+     "key": "V",
+     "mods": [
+      "left",
+      "middle"
+     ],
+     "note": "#,4"
+    },
+    {
+     "beat": 2.0,
+     "beats": 1.5,
+     "key": "V",
+     "mods": [
+      "left",
+      "middle"
+     ],
+     "note": "#,4"
+    },
+    {
+     "beat": 3.5,
+     "beats": 0.5,
+     "key": "M",
+     "mods": [
+      "left"
+     ],
+     "note": ",7"
+    }
+   ],
+   "start_beat": 25.0,
+   "confident": true
+  },
+  {
+   "index": 9,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 3.0,
+     "key": "M",
+     "mods": [
+      "left"
+     ],
+     "note": ",7"
+    },
+    {
+     "beat": 3.0,
+     "beats": 0.5,
+     "key": "N",
+     "mods": [
+      "left"
+     ],
+     "note": ",6"
+    },
+    {
+     "beat": 3.5,
+     "beats": 0.5,
+     "key": "M",
+     "mods": [
+      "left"
+     ],
+     "note": ",7"
+    }
+   ],
+   "start_beat": 29.0,
+   "confident": true
+  },
+  {
+   "index": 10,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 1.5,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    },
+    {
+     "beat": 1.5,
+     "beats": 0.5,
+     "key": "M",
+     "mods": [
+      "left"
+     ],
+     "note": ",7"
+    },
+    {
+     "beat": 2.0,
+     "beats": 1.0,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    },
+    {
+     "beat": 3.0,
+     "beats": 1.0,
+     "key": "C",
+     "mods": [],
+     "note": "3"
+    }
+   ],
+   "start_beat": 33.0,
+   "confident": true
+  },
+  {
+   "index": 11,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 3.0,
+     "key": "M",
+     "mods": [
+      "left"
+     ],
+     "note": ",7"
+    },
+    {
+     "beat": 3.0,
+     "beats": 0.5,
+     "key": "C",
+     "mods": [
+      "left"
+     ],
+     "note": ",3"
+    },
+    {
+     "beat": 3.5,
+     "beats": 0.5,
+     "key": "C",
+     "mods": [
+      "left"
+     ],
+     "note": ",3"
+    }
+   ],
+   "start_beat": 37.0,
+   "confident": true
+  },
+  {
+   "index": 12,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 1.5,
+     "key": "N",
+     "mods": [
+      "left"
+     ],
+     "note": ",6"
+    },
+    {
+     "beat": 1.5,
+     "beats": 0.5,
+     "key": "B",
+     "mods": [
+      "left"
+     ],
+     "note": ",5"
+    },
+    {
+     "beat": 2.0,
+     "beats": 1.0,
+     "key": "N",
+     "mods": [
+      "left"
+     ],
+     "note": ",6"
+    },
+    {
+     "beat": 3.0,
+     "beats": 1.0,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    }
+   ],
+   "start_beat": 41.0,
+   "confident": true
+  },
+  {
+   "index": 13,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 3.0,
+     "key": "B",
+     "mods": [
+      "left"
+     ],
+     "note": ",5"
+    },
+    {
+     "beat": 3.0,
+     "beats": 1.0,
+     "key": "C",
+     "mods": [
+      "left"
+     ],
+     "note": ",3"
+    }
+   ],
+   "start_beat": 45.0,
+   "confident": true
+  },
+  {
+   "index": 14,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 1.0,
+     "key": "V",
+     "mods": [
+      "left"
+     ],
+     "note": ",4"
+    },
+    {
+     "beat": 1.0,
+     "beats": 0.5,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    },
+    {
+     "beat": 1.5,
+     "beats": 1.5,
+     "key": "M",
+     "mods": [
+      "left"
+     ],
+     "note": ",7"
+    },
+    {
+     "beat": 3.0,
+     "beats": 1.0,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    }
+   ],
+   "start_beat": 49.0,
+   "confident": true
+  },
+  {
+   "index": 15,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 1.0,
+     "key": "X",
+     "mods": [],
+     "note": "2"
+    },
+    {
+     "beat": 1.0,
+     "beats": 0.5,
+     "key": "C",
+     "mods": [],
+     "note": "3"
+    },
+    {
+     "beat": 1.5,
+     "beats": 2.5,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    }
+   ],
+   "start_beat": 53.0,
+   "confident": true
+  },
+  {
+   "index": 16,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 0.5,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    },
+    {
+     "beat": 0.5,
+     "beats": 0.5,
+     "key": "M",
+     "mods": [
+      "left"
+     ],
+     "note": ",7"
+    },
+    {
+     "beat": 1.0,
+     "beats": 1.0,
+     "key": "N",
+     "mods": [
+      "left"
+     ],
+     "note": ",6"
+    },
+    {
+     "beat": 2.0,
+     "beats": 1.0,
+     "key": "M",
+     "mods": [
+      "left"
+     ],
+     "note": ",7"
+    },
+    {
+     "beat": 3.0,
+     "beats": 1.0,
+     "key": "B",
+     "mods": [
+      "left",
+      "middle"
+     ],
+     "note": "#,5"
+    }
+   ],
+   "start_beat": 57.0,
+   "confident": true
+  },
+  {
+   "index": 17,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 3.0,
+     "key": "N",
+     "mods": [
+      "left"
+     ],
+     "note": ",6"
+    },
+    {
+     "beat": 3.0,
+     "beats": 0.5,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    },
+    {
+     "beat": 3.5,
+     "beats": 0.5,
+     "key": "X",
+     "mods": [],
+     "note": "2"
+    }
+   ],
+   "start_beat": 61.0,
+   "confident": true
+  },
+  {
+   "index": 18,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 1.5,
+     "key": "C",
+     "mods": [],
+     "note": "3"
+    },
+    {
+     "beat": 1.5,
+     "beats": 0.5,
+     "key": "X",
+     "mods": [],
+     "note": "2"
+    },
+    {
+     "beat": 2.0,
+     "beats": 1.0,
+     "key": "C",
+     "mods": [],
+     "note": "3"
+    },
+    {
+     "beat": 3.0,
+     "beats": 1.0,
+     "key": "B",
+     "mods": [],
+     "note": "5"
+    }
+   ],
+   "start_beat": 65.0,
+   "confident": true
+  },
+  {
+   "index": 19,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 3.0,
+     "key": "X",
+     "mods": [],
+     "note": "2"
+    },
+    {
+     "beat": 3.0,
+     "beats": 1.0,
+     "key": "B",
+     "mods": [
+      "left"
+     ],
+     "note": ",5"
+    }
+   ],
+   "start_beat": 69.0,
+   "confident": true
+  },
+  {
+   "index": 20,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 1.5,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    },
+    {
+     "beat": 1.5,
+     "beats": 0.5,
+     "key": "M",
+     "mods": [
+      "left"
+     ],
+     "note": ",7"
+    },
+    {
+     "beat": 2.0,
+     "beats": 1.0,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    },
+    {
+     "beat": 3.0,
+     "beats": 0.5,
+     "key": "X",
+     "mods": [],
+     "note": "2"
+    },
+    {
+     "beat": 3.5,
+     "beats": 0.5,
+     "key": "C",
+     "mods": [],
+     "note": "3"
+    }
+   ],
+   "start_beat": 73.0,
+   "confident": true
+  },
+  {
+   "index": 21,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 4.0,
+     "key": "C",
+     "mods": [],
+     "note": "3"
+    }
+   ],
+   "start_beat": 77.0,
+   "confident": true
+  },
+  {
+   "index": 22,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 0.5,
+     "key": "N",
+     "mods": [
+      "left"
+     ],
+     "note": ",6"
+    },
+    {
+     "beat": 0.5,
+     "beats": 0.5,
+     "key": "M",
+     "mods": [
+      "left"
+     ],
+     "note": ",7"
+    },
+    {
+     "beat": 1.0,
+     "beats": 1.0,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    },
+    {
+     "beat": 2.0,
+     "beats": 0.5,
+     "key": "M",
+     "mods": [
+      "left"
+     ],
+     "note": ",7"
+    },
+    {
+     "beat": 2.5,
+     "beats": 0.5,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    },
+    {
+     "beat": 3.0,
+     "beats": 1.0,
+     "key": "X",
+     "mods": [],
+     "note": "2"
+    }
+   ],
+   "start_beat": 81.0,
+   "confident": true
+  },
+  {
+   "index": 23,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 1.5,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    },
+    {
+     "beat": 1.5,
+     "beats": 0.5,
+     "key": "B",
+     "mods": [
+      "left"
+     ],
+     "note": ",5"
+    },
+    {
+     "beat": 2.0,
+     "beats": 2.0,
+     "key": "B",
+     "mods": [],
+     "note": "5"
+    }
+   ],
+   "start_beat": 85.0,
+   "confident": true
+  },
+  {
+   "index": 24,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 1.0,
+     "key": "V",
+     "mods": [],
+     "note": "4"
+    },
+    {
+     "beat": 1.0,
+     "beats": 1.0,
+     "key": "C",
+     "mods": [],
+     "note": "3"
+    },
+    {
+     "beat": 2.0,
+     "beats": 1.0,
+     "key": "X",
+     "mods": [],
+     "note": "2"
+    },
+    {
+     "beat": 3.0,
+     "beats": 1.0,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    }
+   ],
+   "start_beat": 89.0,
+   "confident": true
+  },
+  {
+   "index": 25,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 3.0,
+     "key": "C",
+     "mods": [],
+     "note": "3"
+    },
+    {
+     "beat": 3.0,
+     "beats": 1.0,
+     "key": "C",
+     "mods": [],
+     "note": "3"
+    }
+   ],
+   "start_beat": 93.0,
+   "confident": true
+  },
+  {
+   "index": 26,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 1.5,
+     "key": "N",
+     "mods": [],
+     "note": "6"
+    },
+    {
+     "beat": 1.5,
+     "beats": 0.5,
+     "key": "N",
+     "mods": [],
+     "note": "6"
+    },
+    {
+     "beat": 2.0,
+     "beats": 1.5,
+     "key": "B",
+     "mods": [],
+     "note": "5"
+    },
+    {
+     "beat": 3.5,
+     "beats": 0.5,
+     "key": "B",
+     "mods": [],
+     "note": "5"
+    }
+   ],
+   "start_beat": 97.0,
+   "confident": true
+  },
+  {
+   "index": 27,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 0.5,
+     "key": "C",
+     "mods": [],
+     "note": "3"
+    },
+    {
+     "beat": 0.5,
+     "beats": 0.5,
+     "key": "X",
+     "mods": [],
+     "note": "2"
+    },
+    {
+     "beat": 1.0,
+     "beats": 1.0,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    },
+    {
+     "beat": 2.0,
+     "beats": 2.0,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    }
+   ],
+   "start_beat": 101.0,
+   "confident": true
+  },
+  {
+   "index": 28,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 1.5,
+     "key": "X",
+     "mods": [],
+     "note": "2"
+    },
+    {
+     "beat": 1.5,
+     "beats": 0.5,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    },
+    {
+     "beat": 2.0,
+     "beats": 1.0,
+     "key": "X",
+     "mods": [],
+     "note": "2"
+    },
+    {
+     "beat": 3.0,
+     "beats": 1.0,
+     "key": "B",
+     "mods": [],
+     "note": "5"
+    }
+   ],
+   "start_beat": 105.0,
+   "confident": true
+  },
+  {
+   "index": 29,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 3.0,
+     "key": "C",
+     "mods": [],
+     "note": "3"
+    },
+    {
+     "beat": 3.0,
+     "beats": 1.0,
+     "key": "C",
+     "mods": [],
+     "note": "3"
+    }
+   ],
+   "start_beat": 109.0,
+   "confident": true
+  },
+  {
+   "index": 30,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 1.5,
+     "key": "N",
+     "mods": [],
+     "note": "6"
+    },
+    {
+     "beat": 1.5,
+     "beats": 0.5,
+     "key": "N",
+     "mods": [],
+     "note": "6"
+    },
+    {
+     "beat": 2.0,
+     "beats": 1.5,
+     "key": "B",
+     "mods": [],
+     "note": "5"
+    },
+    {
+     "beat": 3.5,
+     "beats": 0.5,
+     "key": "B",
+     "mods": [],
+     "note": "5"
+    }
+   ],
+   "start_beat": 113.0,
+   "confident": true
+  },
+  {
+   "index": 31,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 0.5,
+     "key": "C",
+     "mods": [],
+     "note": "3"
+    },
+    {
+     "beat": 0.5,
+     "beats": 0.5,
+     "key": "X",
+     "mods": [],
+     "note": "2"
+    },
+    {
+     "beat": 1.0,
+     "beats": 1.0,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    },
+    {
+     "beat": 2.0,
+     "beats": 2.0,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    }
+   ],
+   "start_beat": 117.0,
+   "confident": true
+  },
+  {
+   "index": 32,
+   "beats": 4.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 1.5,
+     "key": "X",
+     "mods": [],
+     "note": "2"
+    },
+    {
+     "beat": 1.5,
+     "beats": 0.5,
+     "key": "Z",
+     "mods": [],
+     "note": "1"
+    },
+    {
+     "beat": 2.0,
+     "beats": 1.0,
+     "key": "X",
+     "mods": [],
+     "note": "2"
+    },
+    {
+     "beat": 3.0,
+     "beats": 1.0,
+     "key": "M",
+     "mods": [
+      "left"
+     ],
+     "note": ",7"
+    }
+   ],
+   "start_beat": 121.0,
+   "confident": true
+  },
+  {
+   "index": 33,
+   "beats": 3.0,
+   "events": [
+    {
+     "beat": 0.0,
+     "beats": 3.0,
+     "key": "N",
+     "mods": [
+      "left"
+     ],
+     "note": ",6"
+    }
+   ],
+   "start_beat": 125.0,
+   "confident": true
+  }
+ ]
+}
