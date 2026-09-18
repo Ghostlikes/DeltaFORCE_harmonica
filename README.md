@@ -26,9 +26,17 @@ python play.py                 # 回车 → 提示输入谱面路径；输入 1 
 1. **中文交互入口**：`python play.py` 直接回车 → 提示输入谱面路径；**带引号也能识别**
    （`"…"` `'…'` `“…”` `‘…’` `「…」`，套两层也认），也认 Git-Bash 的 `/f/…` 和 `~`；
    不带扩展名、只写歌名都能命中 `songs/`。
-2. **在线曲库取谱**：输入 `1` → 输入歌名 → 在 [jiko-official.top/delta](https://jiko-official.top/delta)
-   公共曲库（**116 首**，不用登录）搜索 → 下载到 `songs/` 并**直接接着弹**。
-   同名文件正文不同时绝不覆盖（另存 `曲名(曲库).jianpu`），搜不到会给相近曲名。
+2. **三个曲库一起搜**：输入 `1` → 输歌名 → 跨三个公开曲库检索（共 **507 条**），能下的直接下到
+   `songs/` 并**接着弹**；不能下的给出**直达链接**：
+
+   | 曲库 | 目录 | 谱面 |
+   |---|---|---|
+   | [jiko-official.top/delta](https://jiko-official.top/delta) | 116 首 | **可下载**（公开 JSON，免登录） |
+   | [shushu.fan/fun/harmonica](https://shushu.fan/fun/harmonica) | 195 首 | 需登录 → 给直达链接 |
+   | [delta-test.shallow.ink/harmonica](https://delta-test.shallow.ink/harmonica) | 196 首 | 不在公开接口 → 给直达链接 |
+
+   同名文件正文不同时**绝不覆盖**（另存 `曲名(曲库).jianpu`）；两站同名曲的 `songId` 相同（同库镜像）。
+   另两站的谱面也能弹：在页面里把谱面文本复制下来 → `python play.py --paste` 直接弹（不用登录接口）。
 3. **帧率自适应时序**：目标程序按帧采样输入，"修饰键提前量 / 最短按住 / 抬-按间隔"本质都是
    **帧长的倍数**，比例由上游 `InputTiming.cs` 三个档位反推（`帧长×2.4 / 2.7 / 2.4`）。
    首次运行问一次帧率并存进 `~/.harmonica_config.json`：
@@ -80,7 +88,8 @@ DeltaFORCE_harmonica/
 ├── score.py                    谱面解析与编译（5 种格式 → 音符 → 按键事件表）
 ├── keymap.py                   键位与音高映射（音域 48..85、左中右键语义）
 ├── harmonica_config.py         帧率 → 时序档位（首次问一次，记住）
-├── jiko_lib.py                 在线曲库：按歌名搜索 / 下载 / 正文去重
+├── songlib.py                 多源曲库：jiko / shushu / shallow 一起搜（能下的直接下）
+├── jiko_lib.py                 jiko 曲源：搜索 / 下载 / 正文去重
 ├── midi_in.py                  标准 MIDI 读取器（纯 Python，无第三方依赖）
 ├── macros.py                   导出 AHK / Lua / CSV / 时间线 / 简谱
 ├── 弹奏.bat                    一键启动菜单（含各种自检入口）
@@ -94,15 +103,19 @@ DeltaFORCE_harmonica/
 
 > `songs/` 与 `data/` 是**数据**，`docs/` `dev/` `tools/` 是**辅助**——根目录只留你真正要跑的东西。
 
-## 5. 缺音的三种来源（本项目的实战结论）
+## 5. 缺音的五个来源（本项目的实战结论）
 
-实机上"听着缺音"几乎只有三种可能，**这个项目把它们全堵了**，并且都能查：
+实机上"听着缺音"基本就这五种，**这个项目把它们全堵了**，而且每一条都能查：
 
 | 来源 | 现象 | 现在怎么处理 |
 |---|---|---|
 | ① **同键连击间隔不足** | 开头密集连击的 riff 糊掉、听不出旋律，中段（长音/16 分）正常 | 同键「抬→按」强制 ≥40ms：挪后或并成长音（`--retrigger-ms` 可调，`--timing safe` 更保守） |
-| ② **`--late drop` 丢音** | 随机位置零星缺音，越多越明显 | **默认已改为 `--late shift`**：宁可晚十几毫秒，也把每个音都按出来 |
+| ② **`--late drop` 丢音** | 随机位置零星缺音，机器越卡越多 | **默认已改为 `--late shift`**：宁可晚十几毫秒，也把每个音都按出来 |
 | ③ **音域外的音变静音** | 跨度超过 3 个八度的谱面，低音/高音整段消失 | 超域音**按整八度折回**到 48..85，`stats['folded']` 里能看到折了几个 |
+| ④ **超短音**（时值 < 最短按住） | 谱面里 4ms 级的装饰音整段听不见 | 按住时长**提到档位下限**（165Hz→22ms / 60Hz→45ms），宁可略长也不静音 |
+| ⑤ **连发**（两音起点 < 20ms） | 密集装饰音只剩一个音 | 后面的音**顺延到 ≥20ms**（听不出来，但两个音都在） |
+
+> ⑤ 的实例：`songs/起风了.jianpu` 原谱最短 4ms —— 实机就是"少音"；现在自动拉到 20ms/22ms。
 
 **自查命令**（弹完看这几行）：
 
@@ -138,7 +151,9 @@ python play.py --song songs/暗号.jianpu --countdown 8 --debug-timing
 | `--timing safe` | 更保守的内置档（30fps：70/80/70） |
 | `--fps 165` / `--reconfig` | 改/重问帧率；不给 `--timing` 就按它自适应 |
 | `--export ahk,lua…` | 导出宏/时间线/简谱/事件表（`--export csv` 等，单值） |
-| `--list-songs` / `--jiko-search 歌名` | 列出现成曲目 / 非交互地搜歌名并下载 |
+| `--song-search 歌名` | 非交互跨三库搜索（`--jiko-search` 是同义别名），`--source jiko\|shushu\|shallow` 限定来源 |
+| `--paste` | 把**剪贴板里的谱面文本**存进 `songs/` 并直接弹（用于只能登录看谱的站点） |
+| `--list-songs` | 列出现成曲目 |
 
 ## 7. 校验与自检（`dev/`）
 
@@ -162,7 +177,15 @@ python dev/timing_check2.py 1 4                # 空注入时序核对
 
 本项目基于三个开源实现移植并大幅改造：**ChickenD233/midikey-player**（MIT，时序预算与
 `BuildSchedule` 规则、MIDI 选轨）、**ChiZhou6/harmonica-visualizer**、**jiko-official.top/delta**
-（简谱 DSL 语义与公共曲库）。`refs/` 下的快照仅供对照、**不随仓库分发**；
-详见 [`docs/来源出处与许可.md`](docs/来源出处与许可.md)。本仓库代码：MIT（见 `LICENSE`）。
+（简谱 DSL 语义与公共曲库）。
+
+另外接入两个**第三方曲库目录**（只读检索，用于"按歌名找谱"）：
+[shushu.fan/fun/harmonica](https://shushu.fan/fun/harmonica)（三角洲鼠鼠工具 · 口琴曲谱）与
+[delta-test.shallow.ink/harmonica](https://delta-test.shallow.ink/harmonica)（DeltaForce 口琴曲库）。
+两者都**只用各家公开接口/公开页面**：shallow 走它自己的匿名令牌（`POST /api/v1/auth/anonymous-token`，
+带一个本地随机设备指纹）；shushu 只解析其公开页面上的目录信息。**不绕过登录、不伪造凭证、不转载谱面本体**。
+
+`refs/` 下的快照仅供对照、**不随仓库分发**；详见 [`docs/来源出处与许可.md`](docs/来源出处与许可.md)。
+本仓库代码：MIT（见 `LICENSE`）。
 
 详细手册见 [`docs/README_自动弹奏.md`](docs/README_自动弹奏.md)。

@@ -58,7 +58,7 @@ def one(path):
     upstream = all(acts[i][0] <= acts[i + 1][0] + 1e-9 for i in range(len(acts) - 1))
     check("动作时间不倒退", upstream, f"{len(acts)} 个动作")
     check("音序与谱面一致", len(plan) == st["playable"], f"{len(plan)} 个音")
-    gaps = [round((plan[i + 1]["t"] - plan[i]["t"]) * 1000) for i in range(len(plan) - 1)]
+    gaps = [round((plan[i + 1]["kdn"] - plan[i]["kdn"]) * 1000) for i in range(len(plan) - 1)]
     check("没有连发的音（<20ms 间隔）", all(g >= 20 for g in gaps) or not gaps,
           f"最小间隔 {min(gaps) if gaps else '-'}ms")
     check("每个音都按住了（≥一帧）", all(p["hold"] > 0.016 for p in plan),

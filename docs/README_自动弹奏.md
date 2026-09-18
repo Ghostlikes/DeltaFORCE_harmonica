@@ -163,3 +163,16 @@ python play.py --song songs/父亲.jianpu --min-rest 1.5    # 整拍休止也抹
 > **度量口径的坑**（这次漏掉缺音的元凶）：要量「上一次这个键**抬起** → 这次**按下**」，
 > 不能用「按下→按下」—— 后者会把按住的那段时间算进去，26ms 的真实间隔会被报成 250ms，
 > 看起来一切正常。`check_invariants.py` 与 `--debug-timing` 的探针都已改成正确口径。
+
+
+---
+
+## 9. 多源曲库与剪贴板导入（2026-09 加）
+
+* `python play.py` 交互里输入 `1` → 输歌名 → **三个曲库一起搜**（jiko 116 / shushu 195 / shallow 196）：
+  能下载的（jiko）直接下到 `songs/` 并接着弹；不能下载的（shushu、shallow 需登录）给出直达链接。
+* 非交互写法：`python play.py --song-search 歌名 [--source jiko|shushu|shallow] [--dry-run]`
+* 单看曲库：`python songlib.py --list` / `python songlib.py --search 关键词`（缓存 6 小时，`--refresh` 重建）。
+* **别站谱面也能弹**：在站点里复制谱面文本 → `python play.py --paste` → 自动存进 `songs/` 并解析开弹
+  （不会写进坏数据：解析不通过就不落盘）。
+* 曲源与许可细节见 `docs/来源出处与许可.md`；两个第三方站都只用公开接口，不绕过登录。

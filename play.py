@@ -258,8 +258,11 @@ def build_timeline(score, args):
                 notes.append(dict(t=shift + base + ev['beat'] * beat, mi=mi, ev=ev,
                                   dur=ev['beats'] * beat))
         off += span * beat
-    # 第一遍：按理想时刻排开（时值里留出 release_gap 当气口）
-    plan, prev_mods = [], None
+    # 第一遍：按理想时刻排开（时值里留出 release_gap 当气口）。两条防"缺音"的底线：
+    #   ① 超短音（时值 < 最短按住）：按住时长提到下限 —— 手指刚碰一下，游戏根本来不及出声；
+    #   ② 连发（与上一个音的起点间隔 <max(帧长,20ms)）：把后面的音顺延一丁点，否则游戏只认前一个。
+    min_start = max(T['frame'] / 1000.0, 0.020)
+    plan, prev_mods, prev_t = [], None, None
     for n in notes:
         ev, t, dur = n['ev'], n['t'], n['dur']
         if not ev['key']:
@@ -267,11 +270,15 @@ def build_timeline(score, args):
         need = set(ev['mods'])
         change = need != prev_mods
         hold = max(min_hold, dur - rel_gap - (MOD_SWITCH_EXTRA if change else 0.0))
-        hold = min(hold, dur)
-        plan.append(dict(idx=len(plan), t=t, kdn=t, kup=t + hold, hold=hold, key=ev['key'],
+        if dur >= min_hold:
+            hold = min(hold, dur)                  # 正常音：时值里留出气口
+        else:
+            hold = min_hold                        # ① 超短音 → 按住到下限（宁可略长，也不静音）
+        t_eff = t if prev_t is None else max(t, prev_t + min_start)   # ② 连发 → 顺延
+        plan.append(dict(idx=len(plan), t=t_eff, kdn=t_eff, kup=t_eff + hold, hold=hold, key=ev['key'],
                          mods=sorted(need), mi=n['mi'], beats=ev['beats'], note=ev.get('note'),
-                         change=change, dur=dur, compressed=False, fix='', silent=False))
-        prev_mods = need
+                         change=change, dur=dur, compressed=False, fix='', silent=False, nominal=t))
+        prev_mods, prev_t = need, t_eff
 
     # 第二遍：同一个键必须真的「抬起来再按下去」，否则游戏只认第一下（缺音）。
     # 间隔不够就先把这一下往后挪到满足间距（晚十几毫秒，但听得见）；实在挪不进去（音太短）
@@ -349,6 +356,7 @@ class Probe:
         self._held = 0
         self._up = {}                                  # key -> 上一次抬起的时刻
         self.retrig_pushed = self.retrig_merged = 0
+        self.n_clamp = self.n_shift = 0
 
     def on_mod(self, kind):
         if kind == 'mdn':
@@ -406,6 +414,9 @@ class Probe:
         if self.retrig_pushed or self.retrig_merged:
             out.append(f"  同键连击修正：挪后 {self.retrig_pushed} 个 / 并成长音 {self.retrig_merged} 个"
                        f"（同一个键要让游戏看得到抬起，间隔 ≥{T['retrigger']:.0f}ms）")
+        if getattr(self, 'n_clamp', 0) or getattr(self, 'n_shift', 0):
+            out.append(f"  超短音/连发修正：加长 {self.n_clamp} 个 / 顺延 {self.n_shift} 个"
+                       f"（按住不足 {T['min_hold']:.0f}ms 的提到下限；连发拉到 ≥20ms）")
         if dropped:
             out.append(f"  （--late drop：为与歌曲对齐丢掉了 {dropped} 个来不及的音，可 --late shift 改为顺延）")
         return "\n".join(out)
@@ -510,6 +521,8 @@ def play(score, args):
     T = timing_of(args)
     n_push = sum(1 for p in plan if p['fix'] == 'pushed')
     n_merge = sum(1 for p in plan if p['fix'] == 'merged')
+    n_clamp = sum(1 for p in plan if p['hold'] > p['dur'] + 1e-9)          # 超短音被加长
+    n_shift = sum(1 for p in plan if p['t'] > p.get('nominal', p['t']) + 1e-9)   # 连发被顺延
     if getattr(args, 'export', ''):          # 兼容只传了部分参数的调用方（如探针脚本）
         return do_export(plan, acts, total, args)
     if args.dry_run:
@@ -518,6 +531,9 @@ def play(score, args):
         if n_push or n_merge:
             print(f"  同键连击修正：挪后 {n_push} 个 / 并成长音 {n_merge} 个"
                   f"（同一个键要让游戏看得到抬起，间隔 ≥{retrigger_of(args):.0f}ms）")
+        if n_clamp or n_shift:
+            print(f"  超短音/连发修正：加长 {n_clamp} 个 / 顺延 {n_shift} 个"
+                  f"（按住不足 {T['min_hold']:.0f}ms 的提到下限；连发拉到 ≥20ms）")
         last = -1
         for p in plan:
             if p['silent']:
@@ -545,6 +561,7 @@ def play(score, args):
     boost_priority()
     probe = Probe(T)
     probe.retrig_pushed, probe.retrig_merged = n_push, n_merge
+    probe.n_clamp, probe.n_shift = n_clamp, n_shift
     held, dropped, pending = set(), 0, {}
     base = time.perf_counter() + max(args.lead, T['lead_ms'] / 1000.0)
     probe_base = base
@@ -710,19 +727,22 @@ def print_banner():
     print('  三角洲行动 · 口琴自动弹奏')
     print('-' * 66)
     print('  把谱面文件直接拖进本窗口，或粘贴路径（带引号也认）')
-    print('  输入 1        → 按歌名从 jiko 曲库搜索并下载到 songs/')
+    print('  输入 1        → 按歌名跨三个曲库搜（jiko 可下载 / shushu、shallow 给直达链接）')
     print('  输入 ?        → 列出 songs/ 里现成的曲子')
     print('  输入 q        → 退出')
     print('=' * 66)
 
 
 def download_by_name(args, name=None):
-    """按歌名从 jiko 曲库搜索 + 下载到 songs/ → 返回落盘路径（失败 None）。
+    """按歌名跨三个曲库搜索（jiko / shushu / shallow），能下载的直接下到 songs/。
 
-    name=None 时会就地提示输入歌名（交互模式）；给了歌名则完全不发问（--jiko-search 用）。
+    * **jiko** 的谱面在公开接口里 → 直接下载并返回落盘路径；
+    * **shushu.fan** 与 **delta-test.shallow.ink** 的谱面需要登录 / 是站内媒体文件 →
+      只列出结果并给出**直达链接**（配合 --paste 可以把站上的谱面文本直接弹）。
+    name=None 时就地提示输入歌名（交互模式）；给了歌名则完全不发问（--song-search 用）。
     """
     try:
-        import jiko_lib
+        import songlib
     except Exception as e:
         print(f"  ✗ 曲库模块加载失败：{type(e).__name__}: {e}")
         return None
@@ -735,24 +755,32 @@ def download_by_name(args, name=None):
     name = clean_input_path(name)
     if not name:
         return None
+    srcs = [args.source] if getattr(args, 'source', '') else None
     try:
-        songs, src = jiko_lib.load_songs(force=args.refresh_lib)
+        hits = songlib.search(name, sources=srcs, limit=12, force=args.refresh_lib, verbose=True)
     except Exception as e:
         print(f"  ✗ 取不到曲库：{e}")
-        print(f"    可手动打开 {jiko_lib.BASE} 的「曲库」核对，或在有网时重试")
+        print("    可手动打开这三个站核对，或在有网时重试：")
+        for k, u in songlib.SOURCE_SITES.items():
+            print(f"      {songlib.SOURCE_NAMES[k]}：{u}")
         return None
-    hits = jiko_lib.search(name, songs, limit=10)
     if not hits:
-        print(f"  ✗ 曲库里没有「{name}」（曲库共 {len(songs)} 首）")
-        for s in jiko_lib.suggest(name, songs):
-            print(f"     你是想找：{jiko_lib.describe(s)} ？（python play.py --jiko-search 关键词）")
+        print(f"  ✗ 三个曲库都没搜到「{name}」")
         return None
-    top = hits[0]
-    # 只有「第一名的优势不明显」时才让人选，避免每次都多问一句
-    if len(hits) > 1 and top[0] < 1000 and top[0] - hits[1][0] < 250:
-        print(f"  曲库里匹配到 {len(hits)} 条，选一个：")
-        for i, (sc, s) in enumerate(hits, 1):
-            print(f"    {i:2d}. [{sc:4d}] {jiko_lib.describe(s)}")
+    can_dl = [h for h in hits if h['chart']]
+    links = [h for h in hits if not h['chart']]
+    if not can_dl:
+        print(f"  搜到 {len(links)} 条，但都不在公开接口里（需要登录）：")
+        for i, h in enumerate(links[:8], 1):
+            print(f"    {i:2d}. {songlib.describe(h)}")
+            print(f"        打开：{h['url']}")
+        print("    提示：在站点里打开曲谱后把谱面文本复制下来，用 --paste 直接弹（不用登录接口）。")
+        return None
+    print(f"  可下载 {len(can_dl)} 条" + (f"，另有 {len(links)} 条只能给链接" if links else ""))
+    for i, h in enumerate(can_dl, 1):
+        print(f"    {i:2d}. {songlib.describe(h)}")
+    top = can_dl[0]
+    if len(can_dl) > 1:                       # 有多个同名可下载项时才多问一句
         try:
             pick = input('  编号（回车=第 1 个，c=取消）> ').strip()
         except (EOFError, KeyboardInterrupt):
@@ -760,14 +788,89 @@ def download_by_name(args, name=None):
             return None
         if pick.lower() in ('c', 'cancel', '取消'):
             return None
-        if pick.isdigit() and 1 <= int(pick) <= len(hits):
-            top = hits[int(pick) - 1]
+        if pick.isdigit() and 1 <= int(pick) <= len(can_dl):
+            top = can_dl[int(pick) - 1]
         elif pick:
             print('  没听懂，按第 1 个处理')
-    song = top[1]
-    print(f"  选中：{jiko_lib.describe(song)}（匹配度 {top[0]}）")
-    path, note = jiko_lib.download(song, out_dir=SONG_DIR, overwrite=args.force)
+    print(f"  选中：{songlib.describe(top)}")
+    path, note = songlib.download(top, out_dir=SONG_DIR, overwrite=args.force)
+    if not path:
+        print(f"  {note}")
+        return None
     print(f"  已放进曲谱文件夹：{path}")
+    if links:
+        print(f"  （同曲在其它站还有 {len(links)} 条，例如：{links[0]['url']}）")
+    return path
+
+
+def read_clipboard():
+    """读剪贴板里的文本（纯 ctypes，无第三方依赖）。"""
+    CF_UNICODETEXT = 13
+    try:
+        u, k = ctypes.windll.user32, ctypes.windll.kernel32
+        # 64 位下必须声明返回值/参数类型：默认 int 会把 HGLOBAL 句柄截断成 32 位 → 段错误
+        u.OpenClipboard.argtypes = [ctypes.c_void_p]
+        u.GetClipboardData.argtypes = [ctypes.c_uint]
+        u.GetClipboardData.restype = ctypes.c_void_p
+        k.GlobalLock.argtypes = [ctypes.c_void_p]
+        k.GlobalLock.restype = ctypes.c_void_p
+        k.GlobalUnlock.argtypes = [ctypes.c_void_p]
+        if not u.OpenClipboard(None):
+            return ''
+        try:
+            if not u.IsClipboardFormatAvailable(CF_UNICODETEXT):
+                return ''
+            h = u.GetClipboardData(CF_UNICODETEXT)
+            if not h:
+                return ''
+            p = k.GlobalLock(h)
+            if not p:
+                return ''
+            try:
+                return ctypes.c_wchar_p(p).value or ''
+            finally:
+                k.GlobalUnlock(h)
+        finally:
+            u.CloseClipboard()
+    except Exception:
+        return ''
+
+
+def import_clipboard(args):
+    """把剪贴板里的谱面文本存成 songs/ 下的谱面文件 → 返回路径。
+
+    用途：别的站点（如 shushu.fan / delta-test.shallow.ink）的曲谱需要登录才能走接口，
+    但页面上的谱面文本是能看到的 —— 复制下来直接用，不必登录、也不必手抄成文件。
+    """
+    import score as sm
+    text = read_clipboard()
+    if not text.strip():
+        print('  剪贴板是空的（先把谱面文本复制下来，再运行 --paste）')
+        return None
+    title = ''
+    m = re.search(r'(?mi)^\s*TITLE\s*=\s*(.+)$', text)
+    if m:
+        title = m.group(1).strip()
+    if not title:
+        title = (text.strip().splitlines() or [''])[0][:24] or '剪贴板谱面'
+    title = re.sub(r'[\\/:*?"<>|]', '_', title).strip()[:40] or '剪贴板谱面'
+    os.makedirs(SONG_DIR, exist_ok=True)
+    path = os.path.join(SONG_DIR, title + '.jianpu')
+    n = 1
+    while os.path.exists(path):
+        n += 1
+        path = os.path.join(SONG_DIR, f'{title}({n}).jianpu')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(text if text.endswith('\n') else text + '\n')
+    try:                                    # 存之前先验一遍能不能解析，别把坏数据留在 songs/
+        sc = sm.parse_any(path)
+        print(f"  已存入曲谱文件夹：{path}")
+        print(f"  解析：{len(sc.notes)} 个音 · {sc.bpm:g}BPM · {sc.fmt} 格式"
+              + (f" · 警告 {'; '.join(sc.warnings[:2])}" if sc.warnings else ""))
+    except Exception as e:
+        os.remove(path)
+        print(f"  ✗ 这段文本解析不出谱面（{type(e).__name__}: {e}），没入库")
+        return None
     return path
 
 
@@ -892,8 +995,12 @@ def main():
     ap.add_argument('-i', '--interactive', action='store_true',
                     help='交互式选曲：提示输入谱面路径（输入 1 = 按歌名从 jiko 曲库下载）'
                          '；不给谱面且终端可交互时自动进入')
-    ap.add_argument('--jiko-search', default='', metavar='歌名',
-                    help='非交互：直接按歌名从 jiko 曲库搜索并下载到 songs/，然后弹它')
+    ap.add_argument('--song-search', '--jiko-search', dest='jiko_search', default='', metavar='歌名',
+                    help='非交互：按歌名跨三个曲库搜索（jiko 可下载，shushu/shallow 给链接）')
+    ap.add_argument('--source', default='', choices=['', 'jiko', 'shushu', 'shallow'],
+                    help='限定曲库来源（默认三个都搜）')
+    ap.add_argument('--paste', action='store_true',
+                    help='把剪贴板里的谱面文本存进 songs/ 并直接弹（用于别站的曲谱）')
     ap.add_argument('--force', action='store_true', help='下载曲库谱面时覆盖 songs/ 里的同名文件')
     ap.add_argument('--refresh-lib', action='store_true', help='下载前忽略本地缓存，重新拉 jiko 曲库')
     ap.add_argument('--list-songs', action='store_true', help='列出 songs/ 里现成的曲子')
@@ -949,6 +1056,11 @@ def main():
     if args.list_songs:
         return list_songs()
     args._fps = ensure_fps(args)            # 首次运行问一次帧率，之后读配置
+    if args.paste:                              # 剪贴板里的谱面文本 → songs/ → 直接弹
+        p = import_clipboard(args)
+        if not p:
+            return 1
+        args.song = p
     if args.jiko_search:                        # 非交互：搜歌名 → 下载 → 直接接着弹
         path = download_by_name(args, args.jiko_search)
         if not path:
