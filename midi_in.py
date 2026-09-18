@@ -8,6 +8,7 @@
     * 选音轨（默认取音符最多的那一条）—— 对应站点里的「选择旋律音轨」
     * 同一时刻的和弦只保留一个音 —— 对应站点里「同一和弦组只能保留一个音」
 """
+
 from __future__ import annotations
 
 import struct

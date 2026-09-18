@@ -18,7 +18,7 @@ set /p c=请输入编号后回车:
 if "%c%"=="1" python play.py --dry-run
 if "%c%"=="2" python play.py --countdown 8
 if "%c%"=="3" python play.py --calib
-if "%c%"=="4" python selftest2.py vk
+if "%c%"=="4" python dev\selftest2.py vk
 if "%c%"=="5" python play.py --from-measure 1 --to-measure 1 --countdown 5
 if "%c%"=="0" exit /b
 echo.

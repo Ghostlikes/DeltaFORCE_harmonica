@@ -5,6 +5,17 @@
 来源：https://jiko-official.top/delta/app.js（该站的曲库对象字面量）。
 用途：本机当作现成曲目直接演奏 / 当作解析器的真实测试语料（含 :精确拍数、连音、反复线等语法）。
 """
+
+# --- 让本脚本无论放在哪一层子目录，都能 import 到项目根下的模块（play.py / score.py / keymap.py …）---
+import os as _os, sys as _sys
+_d = _os.path.dirname(_os.path.abspath(__file__))
+while _d and not _os.path.isfile(_os.path.join(_d, "play.py")):
+    _p = _os.path.dirname(_d)
+    if _p == _d:
+        break
+    _d = _p
+if _d and _d not in _sys.path:
+    _sys.path.insert(0, _d)
 import json, os, re, sys
 
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'refs', 'jiko_app.js')

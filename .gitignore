@@ -9,6 +9,7 @@ venv/
 refs/
 # jiko 曲库缓存（jiko_lib.py 拉下来的公共曲库，随时可重建）
 _cache/
+timing_log.csv
 
 # ---- 曲目原始扫描图与像素重建中间产物（体积大 / 版权不确定）----
 hd/
@@ -29,3 +30,11 @@ _chk/
 Thumbs.db
 desktop.ini
 *.tmp
+
+# 谱面制作流水线的中间产物（可重跑生成，不入库）
+*.pkl
+*.npy
+song_raw.json
+song_sys.json
+reparse_debug.json
+__pycache__/

@@ -8,6 +8,17 @@ LLMHF_INJECTED），记下到达时间戳后 **吞掉**（return 1），因此�
 
 用法: python timing_check.py [起始小节] [结束小节]    默认 1 4
 """
+
+# --- 让本脚本无论放在哪一层子目录，都能 import 到项目根下的模块（play.py / score.py / keymap.py …）---
+import os as _os, sys as _sys
+_d = _os.path.dirname(_os.path.abspath(__file__))
+while _d and not _os.path.isfile(_os.path.join(_d, "play.py")):
+    _p = _os.path.dirname(_d)
+    if _p == _d:
+        break
+    _d = _p
+if _d and _d not in _sys.path:
+    _sys.path.insert(0, _d)
 import ctypes, ctypes.wintypes as wt, json, sys, threading, time
 
 import play
@@ -85,7 +96,7 @@ _kbproc, _msproc = HOOKPROC(kb_proc), HOOKPROC(ms_proc)
 def main():
     frm = int(sys.argv[1]) if len(sys.argv) > 1 else 1
     to = int(sys.argv[2]) if len(sys.argv) > 2 else 4
-    score = json.load(open('score.json', encoding='utf-8'))
+    score = json.load(open(_os.path.join(_d, 'data', 'score.json'), encoding='utf-8'))
 
     class Args:
         bpm, pad, mode, countdown, lead = 125.0, True, 'hold', 0.0, 0.2

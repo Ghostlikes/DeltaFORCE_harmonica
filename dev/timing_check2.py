@@ -10,6 +10,17 @@
 
 用法: python timing_check2.py [起始小节] [结束小节] [档位]    默认 1 10 standard
 """
+
+# --- 让本脚本无论放在哪一层子目录，都能 import 到项目根下的模块（play.py / score.py / keymap.py …）---
+import os as _os, sys as _sys
+_d = _os.path.dirname(_os.path.abspath(__file__))
+while _d and not _os.path.isfile(_os.path.join(_d, "play.py")):
+    _p = _os.path.dirname(_d)
+    if _p == _d:
+        break
+    _d = _p
+if _d and _d not in _sys.path:
+    _sys.path.insert(0, _d)
 import json, sys, time
 import play
 
@@ -17,7 +28,8 @@ frm = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 to = int(sys.argv[2]) if len(sys.argv) > 2 else 10
 timing = sys.argv[3] if len(sys.argv) > 3 else 'standard'
 
-score = json.load(open('score2.json', encoding='utf-8'))
+_os.chdir(_d)
+score = json.load(open(_os.path.join('data', 'score2.json'), encoding='utf-8'))
 
 
 class Args:

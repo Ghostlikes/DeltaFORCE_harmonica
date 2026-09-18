@@ -1,4 +1,7 @@
-# 三角洲行动 · 口琴自动演奏工具（v4）
+# 三角洲行动 · 口琴自动演奏工具（详细手册）
+
+> 目录结构：`play.py` + 运行时模块在**根目录**，其余按 `songs/` `data/` `docs/` `examples/` `dev/` `tools/` 归类；
+> 所有命令都从**仓库根目录**执行。总览见根目录 `README.md`。
 
 把任意谱面变成游戏内的按键/鼠标操作。**照搬了三份开源实现**并在此基础上优化：
 
@@ -26,7 +29,7 @@ python play.py --song songs/天空之城.jianpu       # 简谱 DSL（jiko 站点
 python play.py --song "songs/小星星.txt"          # BPM=/TITLE= 文本谱（viz2）
 python play.py --song "songs/春日影…三角洲.txt"     # DFH 三行小节谱（简谱/键位/节奏）
 python play.py --song "某首歌.mid"                # 标准 MIDI 文件
-python play.py --score score2.json               # 本项目自己解析出来的事件表
+python play.py --score data/score2.json          # 本项目自己解析出来的事件表
 python play.py --list-songs                      # 列出 songs/ 里 15 首现成曲子
 ```
 MIDI 会自动跳过打击乐轨、挑音轨（默认挑音高最高的旋律轨；`--track 2` 指定、`--track-name 主旋律` 按名字、`--merge` 全并）。
@@ -38,10 +41,10 @@ python play.py --song songs/天空之城.jianpu --dry-run          # 只看时�
 python play.py --song songs/天空之城.jianpu --countdown 8 --debug-timing   # 正式弹 + 逐音延迟报表
 python play.py --song songs/鸟之诗.jianpu --export ahk          # 导出 AutoHotkey 宏
 python play.py --song songs/鸟之诗.jianpu --export lua          # 导出罗技 G HUB 宏
-python play.py --score score2.json --export jianpu              # 把我解析的图片谱导成人人可读的简谱
-python hud.py --score score2.json                               # 屏幕左上角置顶提示条（配任何播放方式）
-python selftest3.py                                            # 端到端自检：17 首谱面全流程（不发按键）
-python check_invariants.py score2.json standard                # 独立校验器：时间轴不变量
+python play.py --score data/score2.json --export jianpu         # 事件表导成人人可读的简谱
+python tools/hud.py --score data/score2.json                    # 屏幕左上角置顶提示条
+python dev/selftest3.py                                        # 端到端自检：全谱面流程（不发按键）
+python dev/check_invariants.py data/score2.json standard        # 独立校验器：时间轴不变量
 ```
 
 **导出宏后就不用开着 Python 了**（游戏里 ACE 会屏蔽全局钩子，宏走的是驱动层，更省事）：
@@ -93,7 +96,7 @@ python check_invariants.py score2.json standard                # 独立校验器
 | `macros.py` | 导出 AutoHotkey / G HUB Lua / CSV / 时间线 |
 | `hud.py` | 置顶提示条（独立运行，配 Python 播放器或导出的宏都行） |
 | `reparse.py` | 从 3 页图片像素重建事件表（本项目曲目专用） |
-| `check_invariants.py` / `timing_check2.py` / `selftest3.py` | 校验器 / 时序探针 / 端到端自检 |
+| `dev/check_invariants.py` / `dev/timing_check2.py` / `dev/selftest3.py` | 校验器 / 时序探针 / 端到端自检 |
 | `songs/` | 15 首现成谱面（jiko 站点曲库 6 首 + viz2/DFH 9 首） |
 | `refs/` | 三份参考实现的快照（midikey-player、harmonica-visualizer、jiko app.js） |
 | `jiko_lib.py` | jiko 站点公共曲库直连：按歌名搜索 → 下载成可弹简谱（116 首，不用登录） |
@@ -109,7 +112,7 @@ python check_invariants.py score2.json standard                # 独立校验器
   并**直接接着弹**。同名正文不同的**绝不覆盖**，另存 `曲名(曲库).jianpu`；正文相同直接复用；
   多条匹配列编号选；搜不到给相近曲名。
 * 空输入 / `?` → 列 `songs/` 曲目；`q` → 退出；弹完问「再来一首？」（直接回车退出）。
-* 管道/脚本里跑（stdin 非终端）**不提示**，退回老行为（`score2.json`），不卡住自动化。
+* 管道/脚本里跑（stdin 非终端）**不提示**，退回老行为（`data/score2.json`），不卡住自动化。
 
 ### 8.2 帧率 → 时序档位（首次运行问一次）
 
@@ -141,3 +144,22 @@ python play.py --song songs/父亲.jianpu --min-rest 1.5    # 整拍休止也抹
 
 默认 `0` = 保留谱面原样（休止是谱面内容，不偷偷改）。
 对照：`天空之城.jianpu` 一个 `0` 都没有 → 所以它实机听起来是连贯的。
+
+### 8.4 同一个键的连击：`--retrigger-ms`（默认 40ms）
+
+谱面里 `,7_ ,7` 这种写法是**同一个音连响两下**（《暗号》开头 riff 就是 `,3 #,5 ,7 ,7 #,5 ,7 ,7`）。
+游戏要**看到手指抬起来**才认第二下，所以同一个键的「抬→按」间隔必须够宽：
+
+* 上游 `InputTiming.cs` 60fps 档给的是 **松→按 ≥40ms**（60Hz 采样 2.4 帧）。这个下限
+  **不随显示器帧率放宽** —— 游戏内部的输入采样未必跟着刷新率走，压到 18~26ms 时第二下会被吞掉
+  （现象：开头的连击 riff 听不出来、像缺音；换成 16 分音符/长音的中段就正常）。
+* 脚本现在对同一个键强制 ≥40ms：间隔不够就**把这一下往后挪**（晚十几毫秒，但听得见）；
+  实在挪不进去（音太短）就**并进前一个同键音**（一个长音顶过去）—— 宁可连成一片，也绝不缺音。
+  挪后还会保证不吃掉**下一个音**的抬起余量（前音抬→后音按 ≥`release_gap`）。
+* `--retrigger-ms 25` 可手工放宽到 25ms（调试用，允许更小）；想更保守就 `--timing safe`
+  （强制内置 30fps 档：同键阈值 80ms、气口 70ms，短到塞不下的连击会自动并成长音）。
+* 每次运行会报告「同键连击修正：挪后 N 个 / 并成长音 M 个」；`--dry-run` 里被挪后的音标着 `←同键挪后`。
+
+> **度量口径的坑**（这次漏掉缺音的元凶）：要量「上一次这个键**抬起** → 这次**按下**」，
+> 不能用「按下→按下」—— 后者会把按住的那段时间算进去，26ms 的真实间隔会被报成 250ms，
+> 看起来一切正常。`check_invariants.py` 与 `--debug-timing` 的探针都已改成正确口径。

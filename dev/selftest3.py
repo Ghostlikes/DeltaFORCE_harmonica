@@ -5,6 +5,18 @@
 不发任何按键（ACE 反作弊会屏蔽全局钩子，注入类自检请另跑 selftest2.py）。
 用法：python selftest3.py [谱面路径...]   默认扫 songs/ 与 midikey 示例 MIDI。
 """
+
+# --- 让本脚本无论放在哪一层子目录，都能 import 到项目根下的模块（play.py / score.py / keymap.py …）---
+import os as _os, sys as _sys
+_d = _os.path.dirname(_os.path.abspath(__file__))
+while _d and not _os.path.isfile(_os.path.join(_d, "play.py")):
+    _p = _os.path.dirname(_d)
+    if _p == _d:
+        break
+    _d = _p
+if _d and _d not in _sys.path:
+    _sys.path.insert(0, _d)
+_os.chdir(_d)                     # 切到项目根，songs/ 相对路径才成立
 import glob
 import json
 import os
@@ -35,7 +47,7 @@ def one(path):
     check("音域自洽", keymap.in_range(st["hi"]) or st["out_of_range"] > 0,
           f"音域 {st['lo']}..{st['hi']}，越界 {st['out_of_range']}")
     # 时间轴 + 不变量（直接复用 play.build_timeline）
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, _d)          # 项目根（play.py 在这）
     import play
 
     class A:
@@ -69,7 +81,8 @@ def one(path):
     # 事件表落盘后用独立校验器再验一遍
     sj = os.path.join(d, "t.json")
     json.dump(tab, open(sj, "w", encoding="utf-8"), ensure_ascii=False)
-    r = subprocess.run([sys.executable, "check_invariants.py", sj, "standard"],
+    ci = os.path.join(_d, "dev", "check_invariants.py")
+    r = subprocess.run([sys.executable, ci, sj, "standard"],
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     ok = r.returncode == 0 and "✗" not in (r.stdout or "")
     check("独立校验器 check_invariants", ok, (r.stdout or r.stderr or "").strip().splitlines()[-1][:80])
@@ -84,6 +97,9 @@ def main():
     for p in paths:
         try:
             one(p)
+        except ModuleNotFoundError as e:
+            print(f"\n=== {os.path.basename(p)} ===\n  ⊘ 跳过：MIDI 解析需要可选依赖 {e.name}"
+                  f"（pip install mido 后再跑）")
         except Exception as e:
             import traceback
             traceback.print_exc()

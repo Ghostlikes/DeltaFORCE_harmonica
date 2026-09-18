@@ -10,12 +10,23 @@
 Python 播放器、导出的 AutoHotkey/G HUB 宏、甚至手动弹，都能用它看谱。
 
 用法：
-    python hud.py --score score2.json              # 默认 125 BPM，倒计时 6 秒
+    python tools/hud.py --score data/score2.json   # 默认 125 BPM，倒计时 6 秒
     python hud.py --song songs/天空之城.jianpu      # 任意格式谱面
     python hud.py --score score2.json --countdown 8 --offset 0
     python hud.py --score score2.json --no-gui     # 只打印，不开窗（核对时间轴用）
 """
+
 from __future__ import annotations
+# --- 让本脚本无论放在哪一层子目录，都能 import 到项目根下的模块（play.py / score.py / keymap.py …）---
+import os as _os, sys as _sys
+_d = _os.path.dirname(_os.path.abspath(__file__))
+while _d and not _os.path.isfile(_os.path.join(_d, "play.py")):
+    _p = _os.path.dirname(_d)
+    if _p == _d:
+        break
+    _d = _p
+if _d and _d not in _sys.path:
+    _sys.path.insert(0, _d)
 
 import argparse
 import json
@@ -141,7 +152,7 @@ def run_headless(title, bpm, evs, args):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--score', default='score2.json')
+    ap.add_argument('--score', default=os.path.normpath(os.path.join(_d, 'data', 'score2.json')))
     ap.add_argument('--song', default='', help='任意格式谱面（.jianpu/.txt/.mid），优先于 --score')
     ap.add_argument('--bpm', type=float, default=0, help='0 = 用谱面自带')
     ap.add_argument('--countdown', type=float, default=6)

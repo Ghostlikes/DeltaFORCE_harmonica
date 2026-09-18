@@ -637,7 +637,7 @@ def to_score_table(score, base_octave="auto", transpose: int = 0, skip_out_of_ra
             m_start[k] = n.start          # 该小节第一个事件（含休止）的绝对起拍
 
     by_m: dict[int, list] = {}
-    out_of_range, total = 0, 0
+    out_of_range, total, folded, folded_notes = 0, 0, 0, []
     for n, k in zip(score.notes, keys):
         if n.pitch is None:
             continue
@@ -646,6 +646,18 @@ def to_score_table(score, base_octave="auto", transpose: int = 0, skip_out_of_ra
         off = round(n.start - m_start[k], 6)
         p = n.pitch + transpose + keymap.OCTAVE * (base - 4)
         key, mods = keymap.map_pitch(p)[:2]
+        if key is None:
+            # 超出可弹音域(48..85) → 按整八度折回。宁可换个八度，也不能让这个音消失：
+            # 静音 = 缺音，是实机最难查的一类问题（见 README「缺音的三种来源」）。
+            for octs in range(1, 6):
+                hit = [c for c in (p - keymap.OCTAVE * octs, p + keymap.OCTAVE * octs)
+                       if keymap.map_pitch(c)[0] is not None]
+                if hit:
+                    p = hit[0]
+                    key, mods = keymap.map_pitch(p)[:2]
+                    folded += 1
+                    folded_notes.append(keymap.solfege(p))
+                    break
         if key is None:
             out_of_range += 1
             if skip_out_of_range:
@@ -668,6 +680,7 @@ def to_score_table(score, base_octave="auto", transpose: int = 0, skip_out_of_ra
                  source=score.source, fmt=score.fmt, measures=measures)
     played = [p + keymap.OCTAVE * (base - 4) for p in pitches]   # 实际会弹出来的音高
     stats = dict(notes=total, playable=total - out_of_range, out_of_range=out_of_range,
+                 folded=folded, folded_notes=sorted(set(folded_notes)),
                  base_octave=base, measures=n_m,
                  beats=round(score.total_beats, 3), seconds=round(score.seconds, 2),
                  lo=min(played, default=0), hi=max(played, default=0),

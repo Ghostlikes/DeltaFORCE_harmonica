@@ -61,13 +61,17 @@ MOUSE = {'middle': (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
          'left': (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP)}
 
 # ---------- 输入时序预算（物理毫秒，来自 MidiKeyPlayer.Engine.InputTiming） ----------
+# 同一个键必须「抬起来再按下去」，游戏才认第二下。上游 60fps 档给的是 松→按 ≥40ms
+# （按 60Hz 采样 2.4 帧算）。这个下限**不随显示帧率放宽**：游戏内部的输入采样未必跟着
+# 显示器刷新率走，压到 18~26ms 时第二下会被吞掉（暗号开头连击 riff 实测缺音、听不出来）。
+RETRIG_MIN_MS = 40.0
 TIMINGS = {
     'standard':   dict(name='标准(60fps)', frame=16.7, mod_lead=40, min_hold=45, release_gap=40,
                        retrigger=45, lead_ms=57),
     'safe':       dict(name='稳健(30fps/卡顿)', frame=33.3, mod_lead=70, min_hold=80, release_gap=70,
                        retrigger=80, lead_ms=104),
     'aggressive': dict(name='极限(高帧率)', frame=8.0, mod_lead=20, min_hold=22, release_gap=18,
-                       retrigger=22, lead_ms=28),
+                       retrigger=40, lead_ms=28),
 }
 MOD_SWITCH_EXTRA = 0.008   # 修饰键状态变化时，前一个音额外让出的时间
 
@@ -75,18 +79,31 @@ MOD_SWITCH_EXTRA = 0.008   # 修饰键状态变化时，前一个音额外让出
 def timing_of(args):
     """实际使用的时序档位。
 
-    本机配过帧率（harmonica_config，首次运行问一次）就按帧率自适应算物理预算，
-    否则沿用上面三个内置档位。帧率自适应用的是从上游 InputTiming 三个档位反推的
-    比例「帧长 × 2.4 / 2.7 / 2.4」+ 下限，60Hz 时精确等于内置 standard。
+    显式给了 --timing（standard / safe / aggressive）就**强制**用内置档位 —— 那是「更保守」
+    的逃生门：某台机器 40ms 还不够时，直接 --timing safe 上 80ms。
+    没给则按本机帧率自适应（harmonica_config 首次运行问一次并记住），比例由上游
+    InputTiming 三档反推：「帧长 × 2.4 / 2.7 / 2.4」+ 下限，60Hz 时精确等于内置 standard。
     """
-    T = dict(TIMINGS[args.timing])
+    forced = getattr(args, 'timing', None)
+    T = dict(TIMINGS[forced or 'standard'])
     fps = getattr(args, '_fps', None)
-    if fps:
+    if fps and not forced:
         p = hcfg.profile_for(fps)
         T.update(frame=p['frame'], mod_lead=p['mod_lead'], min_hold=p['min_hold'],
-                 release_gap=p['release_gap'], retrigger=p['min_hold'],
+                 release_gap=p['release_gap'], retrigger=max(p['min_hold'], RETRIG_MIN_MS),
                  lead_ms=p['lead_ms'], name=f"{T['name'].split('(')[0]}({p['name']})")
     return T
+
+
+def retrigger_of(args) -> float:
+    """同一个键「抬→按」的最短间隔（毫秒）。
+
+    默认取档位值，但不低于 RETRIG_MIN_MS；--retrigger-ms 可手工指定（允许更小，仅供调试）。
+    """
+    val = float(getattr(args, 'retrigger_ms', 0.0) or 0.0)
+    if val > 0:
+        return val
+    return max(float(timing_of(args)['retrigger']), RETRIG_MIN_MS)
 
 
 def ensure_fps(args):
@@ -224,6 +241,7 @@ def build_timeline(score, args):
     T = timing_of(args)
     mod_lead = T['mod_lead'] / 1000.0
     min_hold, rel_gap = T['min_hold'] / 1000.0, T['release_gap'] / 1000.0
+    re_trig = retrigger_of(args) / 1000.0       # 同一个键「抬→按」的最短间隔
     beat = 60.0 / args.bpm
     bpm_m = score['beats_per_measure']
     shift = mod_lead                                    # 第一个音的修饰键也要有提前量
@@ -240,33 +258,69 @@ def build_timeline(score, args):
                 notes.append(dict(t=shift + base + ev['beat'] * beat, mi=mi, ev=ev,
                                   dur=ev['beats'] * beat))
         off += span * beat
-    acts, plan, cur, prev_kup = [], [], set(), None
+    # 第一遍：按理想时刻排开（时值里留出 release_gap 当气口）
+    plan, prev_mods = [], None
     for n in notes:
         ev, t, dur = n['ev'], n['t'], n['dur']
         if not ev['key']:
             continue
         need = set(ev['mods'])
-        change = need != cur
+        change = need != prev_mods
         hold = max(min_hold, dur - rel_gap - (MOD_SWITCH_EXTRA if change else 0.0))
         hold = min(hold, dur)
-        kdn, kup = t, t + hold
-        idx = len(plan)
-        if change:
-            rel_at = (prev_kup + 0.001) if prev_kup is not None else min(kdn, 0.001)
-            for m_ in sorted(cur - need):               # 先松掉不再需要的修饰键
+        plan.append(dict(idx=len(plan), t=t, kdn=t, kup=t + hold, hold=hold, key=ev['key'],
+                         mods=sorted(need), mi=n['mi'], beats=ev['beats'], note=ev.get('note'),
+                         change=change, dur=dur, compressed=False, fix='', silent=False))
+        prev_mods = need
+
+    # 第二遍：同一个键必须真的「抬起来再按下去」，否则游戏只认第一下（缺音）。
+    # 间隔不够就先把这一下往后挪到满足间距（晚十几毫秒，但听得见）；实在挪不进去（音太短）
+    # 就并进前一个同键音，用一个长音顶过去 —— 宁可连成一片，也绝不能缺音。
+    last = {}
+    for p in plan:
+        i = last.get(p['key'])
+        if i is not None:
+            prev = plan[i]
+            want = prev['kup'] + re_trig
+            if p['kdn'] < want:
+                end = p['t'] + p['dur']
+                # 往后挪不能挤掉「下一个音」的抬起余量（前音抬→后音按 ≥release_gap）：
+                # 上限取「自己的时值末尾」和「下一个音的按下时刻 - 抬起余量」里更紧的那个。
+                nxt = plan[p['idx'] + 1] if p['idx'] + 1 < len(plan) else None
+                room = min(end, (nxt['kdn'] - rel_gap) if nxt else end)
+                if want + min_hold <= room:                      # 塞得下 → 往后挪
+                    p['kdn'] = want
+                    p['kup'] = min(max(want + min_hold, want + p['hold']), room)
+                    p['hold'] = p['kup'] - p['kdn']
+                    p['fix'] = 'pushed'
+                else:                                           # 塞不下 → 并进前一个同键音
+                    prev['kup'] = max(prev['kup'], end)
+                    prev['hold'] = prev['kup'] - prev['kdn']
+                    p['silent'] = True
+                    p['fix'] = 'merged'
+                    continue
+        last[p['key']] = p['idx']
+
+    # 第三遍：展开成动作。修饰键状态按**实际发出**的音序推演，并进/挪后都不会错位。
+    acts, cur, prev_kup = [], set(), None
+    for p in plan:
+        if p.get('silent'):
+            continue
+        need = set(p['mods'])
+        p['change'] = need != cur
+        if p['change']:
+            rel_at = (prev_kup + 0.001) if prev_kup is not None else min(p['kdn'], 0.001)
+            for m_ in sorted(cur - need):                   # 先松掉不再需要的修饰键
                 acts.append((rel_at, 'mup', m_, None))
                 rel_at += 0.001
-            for m_ in sorted(need - cur):               # 再按上需要的（尽量给足提前量）
-                at = max(rel_at, kdn - mod_lead)
+            for m_ in sorted(need - cur):                   # 再按上需要的（尽量给足提前量）
+                at = max(rel_at, p['kdn'] - mod_lead)
                 acts.append((at, 'mdn', m_, None))
                 rel_at = at + 0.001
-        acts.append((kdn, 'kdn', ev['key'], idx))
-        acts.append((kup, 'kup', ev['key'], idx))
-        plan.append(dict(idx=idx, t=t, kdn=kdn, kup=kup, hold=hold, key=ev['key'],
-                         mods=sorted(need), mi=n['mi'], beats=ev['beats'],
-                         note=ev.get('note'), change=change, dur=dur,
-                         compressed=change and hold <= min_hold + 1e-9))
-        cur, prev_kup = need, kup
+        acts.append((p['kdn'], 'kdn', p['key'], p['idx']))
+        acts.append((p['kup'], 'kup', p['key'], p['idx']))
+        p['compressed'] = p['change'] and p['hold'] <= min_hold + 1e-9
+        cur, prev_kup = need, p['kup']
     acts.sort(key=lambda a: (round(a[0], 6), ACTION_ORDER[a[1]]))
     return plan, acts, off
 
@@ -293,6 +347,8 @@ class Probe:
         self.late, self.rows = [], []
         self._last_key = self._last_kdn = self._last_kup = self._last_mdn = None
         self._held = 0
+        self._up = {}                                  # key -> 上一次抬起的时刻
+        self.retrig_pushed = self.retrig_merged = 0
 
     def on_mod(self, kind):
         if kind == 'mdn':
@@ -304,7 +360,10 @@ class Probe:
     def on_note(self, p, t_kdn, t_kup, lag, t0):
         lead = (t_kdn - self._last_mdn) * 1000.0 if (self._held > 0 and self._last_mdn) else None
         gap = (t_kdn - self._last_kup) * 1000.0 if self._last_kup else None
-        retrig = (t_kdn - self._last_kdn) * 1000.0 if self._last_key == p['key'] else None
+        # 同键重触发 = 上一次**这个键**抬起的时刻 → 这次按下。若用「按下→按下」，按住的那段
+        # 时间会被算进去（26ms 的真实间隔报成 250ms），这类缺音就永远查不出来。
+        prev_up = self._up.get(p['key'])
+        retrig = (t_kdn - prev_up) * 1000.0 if prev_up is not None else None
         self.total += 1
         if lead is not None:
             self.min_mod_lead = min(self.min_mod_lead, lead)
@@ -330,6 +389,7 @@ class Probe:
                               hold_ms=round(hold_ms, 1),
                               retrig_ms=(round(retrig, 1) if retrig is not None else '')))
         self._last_key, self._last_kdn, self._last_kup = p['key'], t_kdn, t_kup
+        self._up[p['key']] = t_kup
 
     def summary(self, dropped=0):
         T, lat = self.T, self.late
@@ -343,6 +403,9 @@ class Probe:
         out.append(f"  同键重触发 <{T['retrigger']:.0f}ms 的 {self.retrig_short} 个"
                    f"；按住 <{T['frame']:.1f}ms 的 {self.hold_short} 个"
                    f"；时值被压到下限的 {self.compressed} 个")
+        if self.retrig_pushed or self.retrig_merged:
+            out.append(f"  同键连击修正：挪后 {self.retrig_pushed} 个 / 并成长音 {self.retrig_merged} 个"
+                       f"（同一个键要让游戏看得到抬起，间隔 ≥{T['retrigger']:.0f}ms）")
         if dropped:
             out.append(f"  （--late drop：为与歌曲对齐丢掉了 {dropped} 个来不及的音，可 --late shift 改为顺延）")
         return "\n".join(out)
@@ -358,7 +421,8 @@ class Probe:
               f"gap=与上一音抬起间隔 mod_lead=修饰键提前量 hold=按住时长，单位 ms）")
 
 
-SONG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'songs')
+ROOT = os.path.dirname(os.path.abspath(__file__))
+SONG_DIR = os.path.join(ROOT, 'songs')
 
 
 def list_songs():
@@ -444,19 +508,27 @@ def do_export(plan, acts, total, args):
 def play(score, args):
     plan, acts, total = build_timeline(score, args)
     T = timing_of(args)
+    n_push = sum(1 for p in plan if p['fix'] == 'pushed')
+    n_merge = sum(1 for p in plan if p['fix'] == 'merged')
     if getattr(args, 'export', ''):          # 兼容只传了部分参数的调用方（如探针脚本）
         return do_export(plan, acts, total, args)
     if args.dry_run:
         print(f"共 {len(plan)} 个音（非休止）/ {len(acts)} 个动作，时长 {total:.2f}s @♩={args.bpm}"
               f"（档位 {T['name']}, pad={'on' if args.pad else 'off'}, 倒计时 {args.countdown}s）")
+        if n_push or n_merge:
+            print(f"  同键连击修正：挪后 {n_push} 个 / 并成长音 {n_merge} 个"
+                  f"（同一个键要让游戏看得到抬起，间隔 ≥{retrigger_of(args):.0f}ms）")
         last = -1
         for p in plan:
+            if p['silent']:
+                continue
             if p['mi'] != last:
                 print(f"--- 第 {p['mi']} 小节 ---")
                 last = p['mi']
             print(f"  {p['t']:7.3f}s  {'+'.join(p['mods'] + [p['key']]):22s}"
                   f" 时值 {p['beats']:>4}拍({p['dur']*1000:6.0f}ms) 按住 {p['hold']*1000:4.0f}ms"
-                  f" 气口 {(p['dur']-p['hold'])*1000:3.0f}ms")
+                  f" 气口 {(p['dur']-p['hold'])*1000:3.0f}ms"
+                  f"{' ←同键挪后' if p['fix'] == 'pushed' else ''}")
         return
 
     print(f"倒计时 {args.countdown}s：请切到游戏窗口并把口琴唤出（播放中按 F10 停止）")
@@ -472,6 +544,7 @@ def play(score, args):
 
     boost_priority()
     probe = Probe(T)
+    probe.retrig_pushed, probe.retrig_merged = n_push, n_merge
     held, dropped, pending = set(), 0, {}
     base = time.perf_counter() + max(args.lead, T['lead_ms'] / 1000.0)
     probe_base = base
@@ -814,7 +887,7 @@ def interactive_loop(args):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--score', default=None, help='既有的 JSON 事件表（不给谱面时默认 score2.json）')
+    ap.add_argument('--score', default=None, help='既有的 JSON 事件表（不给谱面时默认 data/score2.json）')
     ap.add_argument('--song', default='', help='任意格式谱面：.json 事件表 / .mid / 简谱 .txt/.jianpu')
     ap.add_argument('-i', '--interactive', action='store_true',
                     help='交互式选曲：提示输入谱面路径（输入 1 = 按歌名从 jiko 曲库下载）'
@@ -837,8 +910,9 @@ def main():
     ap.add_argument('--bpm', type=float, default=0, help='速度；0 = 用谱面自带（JSON 事件表回退 125）')
     ap.add_argument('--countdown', type=float, default=6)
     ap.add_argument('--lead', type=float, default=0.0, help='开演前额外留出的秒数')
-    ap.add_argument('--timing', choices=list(TIMINGS), default='standard',
-                    help='输入时序档位：standard(60fps,默认) / safe(30fps/卡顿) / aggressive(高帧率)')
+    ap.add_argument('--timing', choices=list(TIMINGS), default=None,
+                    help='强制内置时序档位（更保守的逃生门）：standard(60fps) / safe(30fps/卡顿) / '
+                         'aggressive(高帧率)；不给就按本机帧率自适应')
     ap.add_argument('--mode', choices=['hold', 'tap', 'once'], default='hold', help='（保留兼容，默认 hold）')
     ap.add_argument('--pad', action='store_true', default=False, help='把每小节补齐到拍号（默认关）')
     ap.add_argument('--no-pad', dest='pad', action='store_false')
@@ -846,8 +920,9 @@ def main():
                     help='抹平短于该拍数的休止（0.25=只抹 0__，0.5=抹 0__/0_）；默认 0 保留谱面原样')
     ap.add_argument('--from-measure', type=int, default=1)
     ap.add_argument('--to-measure', type=int, default=10 ** 9)
-    ap.add_argument('--late', choices=['drop', 'shift'], default='drop',
-                    help='迟到处置：drop=丢掉迟到的音(默认) / shift=整条时间轴顺延')
+    ap.add_argument('--late', choices=['drop', 'shift'], default='shift',
+                    help='迟到处置：shift=整条时间轴顺延(默认，保证不缺音，宁可晚十几毫秒) / '
+                         'drop=直接丢掉迟到的音（会让旋律缺音，除非你就是要严格对齐）')
     ap.add_argument('--late-tol', type=float, default=0.05, help='允许的迟到秒数(默认0.05)')
     ap.add_argument('--verbose-late', action='store_true')
     ap.add_argument('--debug-timing', action='store_true', help='打印逐音延迟明细并导出 CSV')
@@ -860,6 +935,9 @@ def main():
     ap.add_argument('--fps', type=float, default=0.0,
                     help='本机帧率/刷新率：配过就按帧率自适应算时序预算（会记住，只配一次）')
     ap.add_argument('--reconfig', action='store_true', help='重新问一次帧率并覆盖本机配置')
+    ap.add_argument('--retrigger-ms', type=float, default=0.0, metavar='毫秒',
+                    help='同一个键「抬→按」的最短间隔毫秒数；默认取档位值且不低于 40'
+                         '（上游 60fps 档权威值，低于它连击的第二下会被游戏吞掉）')
     args = ap.parse_args()
     INPUT_MODE[0] = args.input
     try:
@@ -877,10 +955,10 @@ def main():
             return 1
         args.song = path
     if not args.song and not args.score:
-        # 没指定谱面：交互式终端里直接进选曲提示；管道/脚本里保持老行为（score2.json），不阻塞
+        # 没指定谱面：交互式终端里直接进选曲提示；管道/脚本里保持老行为（data/score2.json），不阻塞
         if args.interactive or sys.stdin.isatty():
             return interactive_loop(args)
-        args.score = 'score2.json'
+        args.score = os.path.join(ROOT, 'data', 'score2.json')
     return run_song(args)
 
 

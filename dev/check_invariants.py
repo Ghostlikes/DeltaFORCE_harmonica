@@ -9,12 +9,24 @@
   4) 每个音按住时长 >= 档位最短按住；前音抬起→后音按下 >= 抬起余量（帧采样预算）
   5) 修饰键状态变化不与音键按下落在同一时刻
   6) 同键重触发间隔 >= 重触发阈值
-用法: python check_invariants.py [score2.json] [档位]
+用法: python dev/check_invariants.py [data/score2.json] [档位]
 """
+
+# --- 让本脚本无论放在哪一层子目录，都能 import 到项目根下的模块（play.py / score.py / keymap.py …）---
+import os as _os, sys as _sys
+_d = _os.path.dirname(_os.path.abspath(__file__))
+while _d and not _os.path.isfile(_os.path.join(_d, "play.py")):
+    _p = _os.path.dirname(_d)
+    if _p == _d:
+        break
+    _d = _p
+if _d and _d not in _sys.path:
+    _sys.path.insert(0, _d)
 import json, sys
 import play
 
-path = sys.argv[1] if len(sys.argv) > 1 else 'score2.json'
+_os.chdir(_d)                     # 切到项目根，data/、songs/ 相对路径才成立
+path = sys.argv[1] if len(sys.argv) > 1 else _os.path.join('data', 'score2.json')
 timing = sys.argv[2] if len(sys.argv) > 2 else 'standard'
 T = play.TIMINGS[timing]
 
@@ -79,12 +91,18 @@ for t, kind, arg, nidx in acts:
                 bad.append(("修饰键与音键同刻", round(t, 4), arg))
 
 # 同键重触发
-ks = [p for p in plan if p['key']]
-for i in range(1, len(ks)):
-    if ks[i]['key'] == ks[i - 1]['key']:
-        d = (ks[i]['kdn'] - ks[i - 1]['kdn']) * 1000
-        if d < T['retrigger']:
-            bad.append(("同键重触发过密", i, f"{ks[i]['key']} {d:.0f}ms < {T['retrigger']}ms"))
+# 口径必须是「上一次同一个键抬起 → 这一次按下」。用「按下→按下」会把按住的那段时间算进去，
+# 26ms 的真实间隔会被报成 250ms，这类缺音就查不出来了（暗号开头连击 riff 就是这么漏掉的）。
+last_up = {}
+for i, p in enumerate(plan):
+    if not p['key']:
+        continue
+    if p['key'] in last_up:
+        d = (p['kdn'] - last_up[p['key']]) * 1000
+        # 阈值比较留 1e-6 容差：计划里间隔正好等于阈值时，浮点会算成 44.999999…
+        if d < T['retrigger'] - 1e-6:
+            bad.append(("同键重触发过密", i, f"{p['key']} 抬→按 {d:.1f}ms < {T['retrigger']}ms"))
+    last_up[p['key']] = p['kup']
 
 print(f"不变量检查：{'全部通过 ✔' if not bad else f'{len(bad)} 处异常'}")
 for b in bad[:20]:

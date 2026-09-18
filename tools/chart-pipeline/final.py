@@ -1,5 +1,16 @@
 """Final pass: classify every glyph in the song using the complete cluster inventory
 (digit clusters 0-7 verified against key-letter row + VLM montage reads)."""
+
+# --- 让本脚本无论放在哪一层子目录，都能 import 到项目根下的模块（play.py / score.py / keymap.py …）---
+import os as _os, sys as _sys
+_d = _os.path.dirname(_os.path.abspath(__file__))
+while _d and not _os.path.isfile(_os.path.join(_d, "play.py")):
+    _p = _os.path.dirname(_d)
+    if _p == _d:
+        break
+    _d = _p
+if _d and _d not in _sys.path:
+    _sys.path.insert(0, _d)
 import pickle, json, numpy as np
 from collections import Counter, defaultdict
 from PIL import Image

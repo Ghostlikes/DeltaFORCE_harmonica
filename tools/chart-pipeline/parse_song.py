@@ -4,6 +4,17 @@ Glyph classes are learned from labelled seeds (page 0, system 0) that were read 
 a VLM montage and independently cross-checked against the key-letter row:
   digit 4->V, 1->Z, 6->N, 5->B, 3->C  (user mapping ZXCVBNM, = 1..7,i)
 """
+
+# --- 让本脚本无论放在哪一层子目录，都能 import 到项目根下的模块（play.py / score.py / keymap.py …）---
+import os as _os, sys as _sys
+_d = _os.path.dirname(_os.path.abspath(__file__))
+while _d and not _os.path.isfile(_os.path.join(_d, "play.py")):
+    _p = _os.path.dirname(_d)
+    if _p == _d:
+        break
+    _d = _p
+if _d and _d not in _sys.path:
+    _sys.path.insert(0, _d)
 import numpy as np, json, os, sys
 from PIL import Image
 from scipy import ndimage
