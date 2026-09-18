@@ -26,14 +26,14 @@ python play.py                 # 回车 → 提示输入谱面路径；输入 1 
 1. **中文交互入口**：`python play.py` 直接回车 → 提示输入谱面路径；**带引号也能识别**
    （`"…"` `'…'` `“…”` `‘…’` `「…」`，套两层也认），也认 Git-Bash 的 `/f/…` 和 `~`；
    不带扩展名、只写歌名都能命中 `songs/`。
-2. **三个曲库一起搜**：输入 `1` → 输歌名 → 跨三个公开曲库检索（共 **507 条**），能下的直接下到
+2. **三个曲库一起搜**：输入 `1` → 输歌名 → 跨三个公开曲库检索（**500+ 条**，数量实时增长），能下的直接下到
    `songs/` 并**接着弹**；不能下的给出**直达链接**：
 
    | 曲库 | 目录 | 谱面 |
    |---|---|---|
    | [jiko-official.top/delta](https://jiko-official.top/delta) | 116 首 | **可下载**（公开 JSON，免登录） |
-   | [shushu.fan/fun/harmonica](https://shushu.fan/fun/harmonica) | 195 首 | 需登录 → 给直达链接 |
-   | [delta-test.shallow.ink/harmonica](https://delta-test.shallow.ink/harmonica) | 196 首 | 不在公开接口 → 给直达链接 |
+   | [shushu.fan/fun/harmonica](https://shushu.fan/fun/harmonica) | 195+ 首 | 需登录 → 给直达链接 |
+   | [delta-test.shallow.ink/harmonica](https://delta-test.shallow.ink/harmonica) | 196+ 首 | 不在公开接口 → 给直达链接 |
 
    同名文件正文不同时**绝不覆盖**（另存 `曲名(曲库).jianpu`）；两站同名曲的 `songId` 相同（同库镜像）。
    另两站的谱面也能弹：在页面里把谱面文本复制下来 → `python play.py --paste` 直接弹（不用登录接口）。
