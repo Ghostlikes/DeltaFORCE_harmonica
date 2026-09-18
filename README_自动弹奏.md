@@ -96,3 +96,48 @@ python check_invariants.py score2.json standard                # 独立校验器
 | `check_invariants.py` / `timing_check2.py` / `selftest3.py` | 校验器 / 时序探针 / 端到端自检 |
 | `songs/` | 15 首现成谱面（jiko 站点曲库 6 首 + viz2/DFH 9 首） |
 | `refs/` | 三份参考实现的快照（midikey-player、harmonica-visualizer、jiko app.js） |
+| `jiko_lib.py` | jiko 站点公共曲库直连：按歌名搜索 → 下载成可弹简谱（116 首，不用登录） |
+| `harmonica_config.py` | 本机帧率 → 时序档位（首次运行问一次，存 `~/.harmonica_config.json`） |
+
+## 8. 交互式入口 + 帧率档位 + 短休止（2026-09-19）
+
+### 8.1 `python play.py` 直接回车流
+
+* 不带参数直接跑 → 提示输入谱面路径；**带引号也能识别**：`"…"` `'…'` `“…”` `‘…’` `「…」`（套两层也认），
+  也认 Git-Bash 的 `/f/…` 写法和 `~`；不带扩展名、只写歌名（`天空之城`）都能解析到 `songs/` 里的文件。
+* 输入 `1` → 提示输入歌名 → 在 https://jiko-official.top/delta 公共曲库搜索（无需账号）→ 存进 `songs/`
+  并**直接接着弹**。同名正文不同的**绝不覆盖**，另存 `曲名(曲库).jianpu`；正文相同直接复用；
+  多条匹配列编号选；搜不到给相近曲名。
+* 空输入 / `?` → 列 `songs/` 曲目；`q` → 退出；弹完问「再来一首？」（直接回车退出）。
+* 管道/脚本里跑（stdin 非终端）**不提示**，退回老行为（`score2.json`），不卡住自动化。
+
+### 8.2 帧率 → 时序档位（首次运行问一次）
+
+目标程序按帧采样输入，「修饰键提前量 / 最短按住 / 抬-按间隔」本质是**帧长的倍数**。
+从上游 `InputTiming.cs` 三个档位反推出统一比例 `帧长×2.4 / 2.7 / 2.4`（下限 20/22/18ms），
+于是任意帧率都能算 —— 60Hz 精确还原上游 standard，144Hz 精确还原 aggressive：
+
+| 帧率 | 帧长 | 修饰键提前 | 最短按住 | 抬-按间隔 |
+|---|---|---|---|---|
+| 30Hz | 33.3ms | 80ms | 90ms | 80ms |
+| 60Hz | 16.7ms | 40ms | 45ms | 40ms（= standard） |
+| 144Hz | 6.9ms | 20ms | 22ms | 18ms（= aggressive） |
+| **165Hz（本机）** | **6.1ms** | **20ms** | **22ms** | **18ms** |
+
+首次运行自动读显示器刷新率当默认值（本机检测到 **165Hz**），回车即采用并存进
+`~/.harmonica_config.json`；改：`--fps 165` / `--reconfig`；`--timing standard|safe|aggressive` 仍可强制内置档。
+
+### 8.3 `--min-rest`：谱面里的 `0` 会被**如实**弹成静音
+
+`0` 是休止符，脚本忠实照弹 —— 谱面里写几个 `0`，就有几段静音。`父亲.jianpu` 有 **27 处、合计 9.31s**，
+其中 14 处是快速跑句里插的 **0.25 拍休止**（形如 `6-- 0__ 6__ 7_`），听感就是「一顿一顿」。
+若这些 `0` 是当初图片转录时补空档塞进去的（不是原曲真有停顿），用 `--min-rest` 抹平：
+
+```
+python play.py --song songs/父亲.jianpu --min-rest 0.25   # 只抹 0__ ：27 处 → 7 处
+python play.py --song songs/父亲.jianpu --min-rest 0.5    # 再抹 0_  ：27 处 → 3 处
+python play.py --song songs/父亲.jianpu --min-rest 1.5    # 整拍休止也抹：27 处 → 0 处
+```
+
+默认 `0` = 保留谱面原样（休止是谱面内容，不偷偷改）。
+对照：`天空之城.jianpu` 一个 `0` 都没有 → 所以它实机听起来是连贯的。

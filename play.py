@@ -23,16 +23,23 @@ v3：
     --debug-timing 打印全部明细并导出 timing_log.csv。
 
 常用：
+    python play.py                           # 交互式：提示输入谱面路径 → 回车即开始演奏
+                                             #   输入 1        = 按歌名从 jiko 曲库搜索并下载
+                                             #   输入文件可直接拖进窗口，带引号也认
     python play.py --dry-run                 # 只打印时间轴（不按键）
-    python play.py --countdown 8             # 8 秒倒计时后开始（期间切到游戏窗口）
+    python play.py --song songs/天空之城.jianpu --countdown 8
+    python play.py --jiko-search 天空之城       # 非交互：搜歌名下载后直接弹
+    python play.py --list-songs               # 列出 songs/ 里现成的曲子
     python play.py --debug-timing            # 演奏 + 逐音延迟报表
     python play.py --timing safe             # 机器卡 / 30fps 用稳健档
     python play.py --from-measure 1 --to-measure 4
     python play.py --calib                   # 用耳朵确认中键/右键/左键的语义
     播放中随时按 F10 立即停止（会松掉所有按键）
 """
-import argparse, csv, ctypes, json, os, sys, time
+import argparse, csv, ctypes, json, os, re, sys, time
 from ctypes import wintypes as wt
+
+import harmonica_config as hcfg
 
 user32 = ctypes.WinDLL('user32', use_last_error=True)
 winmm = ctypes.WinDLL('winmm')
@@ -63,6 +70,71 @@ TIMINGS = {
                        retrigger=22, lead_ms=28),
 }
 MOD_SWITCH_EXTRA = 0.008   # 修饰键状态变化时，前一个音额外让出的时间
+
+
+def timing_of(args):
+    """实际使用的时序档位。
+
+    本机配过帧率（harmonica_config，首次运行问一次）就按帧率自适应算物理预算，
+    否则沿用上面三个内置档位。帧率自适应用的是从上游 InputTiming 三个档位反推的
+    比例「帧长 × 2.4 / 2.7 / 2.4」+ 下限，60Hz 时精确等于内置 standard。
+    """
+    T = dict(TIMINGS[args.timing])
+    fps = getattr(args, '_fps', None)
+    if fps:
+        p = hcfg.profile_for(fps)
+        T.update(frame=p['frame'], mod_lead=p['mod_lead'], min_hold=p['min_hold'],
+                 release_gap=p['release_gap'], retrigger=p['min_hold'],
+                 lead_ms=p['lead_ms'], name=f"{T['name'].split('(')[0]}({p['name']})")
+    return T
+
+
+def ensure_fps(args):
+    """拿到本机帧率，并把结果记进 ~/.harmonica_config.json。
+
+    优先级：--fps 命令行 > 已存的配置 > 首次运行问一次 > 无交互则用内置 60fps 档。
+    只问一次；之后想改：--fps 165 或 --reconfig。
+    """
+    if args.fps:
+        cfg = hcfg.load()
+        cfg['fps'] = float(args.fps)
+        hcfg.save(cfg)
+        return float(args.fps)
+    cfg = hcfg.load()
+    if cfg.get('fps') and not args.reconfig:
+        return float(cfg['fps'])
+    # 非交互（管道/脚本里跑）就别卡住，直接用内置档；也不写配置，留给下次真人运行再问
+    if not (args.reconfig or args.interactive or sys.stdin.isatty()):
+        return None
+    det = hcfg.detect_refresh_rate()
+    print('─' * 62)
+    print('  第一次运行：时序档位要按你的帧率来配（只问这一次，之后自动记住）')
+    print('  目标程序按帧采样输入，「修饰键提前量 / 最短按住」都是帧长的倍数，')
+    print('  所以帧率直接决定预算：165Hz 用 20ms 就够，30Hz 得给到 80ms。')
+    if det:
+        print(f'  自动检测到显示器刷新率：{det} Hz（游戏内帧率不同就填实际值）')
+    try:
+        s = input(f'  帧率 [{"auto:" + str(det) if det else "60"}] > ').strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+    fps = float(det or hcfg.DEFAULT_FPS)
+    if s:
+        got = re.sub(r'[^\d.]', '', clean_input_path(s))
+        try:
+            if got:
+                fps = float(got)
+        except Exception:
+            print(f'  没看懂「{s}」，先用 {fps:g}Hz')
+    fps = max(10.0, min(1000.0, fps))
+    cfg['fps'] = fps
+    ok = hcfg.save(cfg)
+    p = hcfg.profile_for(fps)
+    print(f'  已记住 {fps:g}Hz → 帧长 {p["frame"]}ms · 修饰键提前 {p["mod_lead"]}ms · '
+          f'最短按住 {p["min_hold"]}ms · 抬-按间隔 {p["release_gap"]}ms')
+    print(f'  （存在 {hcfg.CONFIG_PATH if ok else "内存里（写文件失败）"}；改：--fps 165 / --reconfig）')
+    print('─' * 62)
+    return fps
 
 
 class KEYBDINPUT(ctypes.Structure):
@@ -149,7 +221,7 @@ ACTION_ORDER = {'mup': 0, 'kup': 0, 'mdn': 1, 'kdn': 1}    # 同一时刻：先�
 
 def build_timeline(score, args):
     """展开成 (音清单, 动作队列, 总时长s)。动作 = (t, kind, arg, 音序号)。"""
-    T = TIMINGS[args.timing]
+    T = timing_of(args)
     mod_lead = T['mod_lead'] / 1000.0
     min_hold, rel_gap = T['min_hold'] / 1000.0, T['release_gap'] / 1000.0
     beat = 60.0 / args.bpm
@@ -320,6 +392,11 @@ def load_song(args):
     import score as sm
     sc = sm.parse_any(src, track=args.midi_track, prefer_name=args.track_name,
                       melody=args.melody, merge=args.merge)
+    if args.min_rest > 0:                      # 抹平过短的休止（可选听感修正，默认关）
+        fixed = sm.squeeze_short_rests(sc, args.min_rest)
+        if fixed:
+            print(f"  · 已抹平 {fixed} 处 ≤{args.min_rest:g} 拍的短休止"
+                  f"（--min-rest 0 可还原谱面原样）")
     print(sm.report(sc))
     tab, st = sm.to_score_table(sc, base_octave=args.base_octave, transpose=args.transpose)
     extra = ""
@@ -354,7 +431,7 @@ def do_export(plan, acts, total, args):
         sys.exit(f"未知导出格式：{args.export}")
     print(f"已导出 {args.export} 宏：{path}")
     print(f"  含 {len(plan)} 个音 / {len(acts)} 个动作 / 总时长 {total:.2f}s"
-          f"（BPM {args.bpm:g}，时序档位 {TIMINGS[args.timing]['name']}）")
+          f"（BPM {args.bpm:g}，时序档位 {timing_of(args)['name']}）")
     if args.export == 'ahk':
         print("  用法：装 AutoHotkey v2 → 双击该 .ahk → 切到游戏窗口 → Ctrl+Alt+S 起弹，F10 中止")
     elif args.export == 'lua':
@@ -366,7 +443,7 @@ def do_export(plan, acts, total, args):
 
 def play(score, args):
     plan, acts, total = build_timeline(score, args)
-    T = TIMINGS[args.timing]
+    T = timing_of(args)
     if getattr(args, 'export', ''):          # 兼容只传了部分参数的调用方（如探针脚本）
         return do_export(plan, acts, total, args)
     if args.dry_run:
@@ -447,7 +524,7 @@ def play(score, args):
 
 def calib(args):
     """校准：用耳朵确认鼠标三键在游戏里的真实语义（中键=半音? 右键=升八度?）。"""
-    T = TIMINGS[args.timing]
+    T = timing_of(args)
     ml, hold, gap = T['mod_lead'] / 1000.0, 0.30, 0.45
     seqs = [
         ("A 中音自然音阶（不按任何鼠标键）", [([], k) for k in ('Z', 'X', 'C', 'V', 'B', 'N', 'M', ',')]),
@@ -480,57 +557,211 @@ def calib(args):
     print("校准结束")
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--score', default='score2.json', help='既有的 JSON 事件表')
-    ap.add_argument('--song', default='', help='任意格式谱面：.json 事件表 / .mid / 简谱 .txt/.jianpu')
-    ap.add_argument('--list-songs', action='store_true', help='列出 songs/ 里现成的曲子')
-    ap.add_argument('--transpose', type=int, default=0, help='整体移调多少半音（默认 0）')
-    ap.add_argument('--base-octave', default='auto', help="口琴基准八度 auto|2|3|4|5（默认 auto 自动贴合音域）")
-    ap.add_argument('--melody', choices=['highest', 'lowest'], default='highest',
-                    help='MIDI 和弦时保留最高音(旋律,默认)还是最低音')
-    ap.add_argument('--midi-track', type=int, default=None, help='MIDI 指定轨（从 1 数；默认自动挑旋律轨）')
-    ap.add_argument('--track-name', default=None, help='MIDI 按音轨名挑（如 主旋律）')
-    ap.add_argument('--merge', action='store_true', help='MIDI 把所有非打击乐轨合并演奏')
-    ap.add_argument('--export', choices=['', 'ahk', 'lua', 'csv', 'timeline', 'jianpu', 'json'],
-                    default='', help='导出宏/时间线后退出：ahk(AutoHotkey) lua(GHUB) csv timeline jianpu json')
-    ap.add_argument('--export-path', default='', help='导出文件名（默认 曲名_格式.扩展名）')
-    ap.add_argument('--bpm', type=float, default=0, help='速度；0 = 用谱面自带（JSON 事件表回退 125）')
-    ap.add_argument('--countdown', type=float, default=6)
-    ap.add_argument('--lead', type=float, default=0.0, help='开演前额外留出的秒数')
-    ap.add_argument('--timing', choices=list(TIMINGS), default='standard',
-                    help='输入时序档位：standard(60fps,默认) / safe(30fps/卡顿) / aggressive(高帧率)')
-    ap.add_argument('--mode', choices=['hold', 'tap', 'once'], default='hold', help='（保留兼容，默认 hold）')
-    ap.add_argument('--pad', action='store_true', default=False, help='把每小节补齐到拍号（默认关）')
-    ap.add_argument('--no-pad', dest='pad', action='store_false')
-    ap.add_argument('--from-measure', type=int, default=1)
-    ap.add_argument('--to-measure', type=int, default=10 ** 9)
-    ap.add_argument('--late', choices=['drop', 'shift'], default='drop',
-                    help='迟到处置：drop=丢掉迟到的音(默认) / shift=整条时间轴顺延')
-    ap.add_argument('--late-tol', type=float, default=0.05, help='允许的迟到秒数(默认0.05)')
-    ap.add_argument('--verbose-late', action='store_true')
-    ap.add_argument('--debug-timing', action='store_true', help='打印逐音延迟明细并导出 CSV')
-    ap.add_argument('--timing-log', default='', help='CSV 路径（默认 timing_log.csv）')
-    ap.add_argument('--dry-run', action='store_true')
-    ap.add_argument('--calib', action='store_true')
-    ap.add_argument('--abort', default='F10')
-    ap.add_argument('--input', choices=['vk', 'scan', 'both'], default='vk',
-                    help='键盘注入：vk(默认) / scan(DirectInput 型游戏) / both')
-    args = ap.parse_args()
-    INPUT_MODE[0] = args.input
+# ───────────────────────── 交互式选曲（直接跑 python play.py） ─────────────────────────
+
+QUOTE_PAIRS = [('"', '"'), ("'", "'"), ('“', '”'), ('‘', '’'), ('「', '」'), ('『', '』')]
+
+
+def clean_input_path(s):
+    """清掉用户粘进来的输入里的包装：包裹引号（拖拽/「复制为路径」都会带）、零宽字符、首尾空白。
+
+    支持 ""…""、''…''、中文引号 “”‘’「」『』，可嵌套多层（复制两次就套两层）。
+    """
+    s = str(s or '').replace('\u200b', '').replace('\ufeff', '').replace('\xa0', ' ').strip()
+    changed = True
+    while changed and len(s) > 2:
+        changed = False
+        for a, b in QUOTE_PAIRS:
+            if s.startswith(a) and s.endswith(b):
+                s = s[len(a):-len(b)].strip()
+                changed = True
+    return s
+
+
+def win_path(p):
+    """把 Git-Bash/MSYS 风格路径（/f/TUVSUD/…）与 ~ 转成 Windows Python 认识的路径。"""
+    p = os.path.expanduser(str(p or '').strip())
+    if re.match(r'^/[A-Za-z](?:/|$)', p):
+        p = p[1].upper() + ':' + p[2:]
+    if re.match(r'^[A-Za-z]:', p) or p.startswith(('\\\\', '//')):
+        return os.path.normpath(p)
+    return os.path.normpath(os.path.abspath(p))
+
+
+def find_local(key):
+    """在 songs/ 里按名字找 → [(文件名, 完整路径), …]，精确命中排最前。"""
+    if not os.path.isdir(SONG_DIR):
+        return []
+    files = sorted(f for f in os.listdir(SONG_DIR)
+                   if f.lower().endswith(('.jianpu', '.txt', '.mid', '.midi'))
+                   and not f.startswith(('_', '.')))
+    norm = lambda x: re.sub(r'[\s_\-（）()【】\[\]·]+', '', str(x)).lower()
+    key = str(key or '').strip()
+    stem = os.path.splitext(key)[0]
+    exact, fuzzy = [], []
+    for f in files:
+        fstem = os.path.splitext(f)[0]
+        if f == key or fstem == key or f.lower() == key.lower() or fstem.lower() == stem.lower():
+            exact.append(f)
+        elif norm(key) and norm(key) in norm(fstem):
+            fuzzy.append(f)
+    out = list(dict.fromkeys(exact + fuzzy))
+    return [(f, os.path.join(SONG_DIR, f)) for f in out]
+
+
+def resolve_song_input(raw):
+    """把一行输入解析成实际谱面路径 → (路径 or None, 失败原因)。"""
+    s = clean_input_path(raw)
+    if not s:
+        return None, '空输入'
+    base = win_path(s)
+    cands = [base]
+    if not os.path.splitext(base)[1]:
+        cands += [base + e for e in ('.jianpu', '.txt', '.mid', '.midi', '.json')]
+    else:
+        root, ext = os.path.splitext(base)
+        if ext.lower() == '.midi':
+            cands.append(root + '.mid')
+        elif ext.lower() == '.mid':
+            cands.append(root + '.midi')
+    for c in cands:
+        if os.path.isfile(c):
+            return c, ''
+    if os.path.isdir(base):
+        return None, f'「{base}」是个文件夹，需要指到具体谱面文件'
+    return None, f'找不到文件：{base}'
+
+
+def print_banner():
+    print('=' * 66)
+    print('  三角洲行动 · 口琴自动弹奏')
+    print('-' * 66)
+    print('  把谱面文件直接拖进本窗口，或粘贴路径（带引号也认）')
+    print('  输入 1        → 按歌名从 jiko 曲库搜索并下载到 songs/')
+    print('  输入 ?        → 列出 songs/ 里现成的曲子')
+    print('  输入 q        → 退出')
+    print('=' * 66)
+
+
+def download_by_name(args, name=None):
+    """按歌名从 jiko 曲库搜索 + 下载到 songs/ → 返回落盘路径（失败 None）。
+
+    name=None 时会就地提示输入歌名（交互模式）；给了歌名则完全不发问（--jiko-search 用）。
+    """
     try:
-        winmm.timeBeginPeriod(1)
-    except Exception:
-        pass
-    if args.calib:
-        return calib(args)
-    if args.list_songs:
-        return list_songs()
+        import jiko_lib
+    except Exception as e:
+        print(f"  ✗ 曲库模块加载失败：{type(e).__name__}: {e}")
+        return None
+    if name is None:
+        try:
+            name = input('歌名（直接回车取消）> ')
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return None
+    name = clean_input_path(name)
+    if not name:
+        return None
+    try:
+        songs, src = jiko_lib.load_songs(force=args.refresh_lib)
+    except Exception as e:
+        print(f"  ✗ 取不到曲库：{e}")
+        print(f"    可手动打开 {jiko_lib.BASE} 的「曲库」核对，或在有网时重试")
+        return None
+    hits = jiko_lib.search(name, songs, limit=10)
+    if not hits:
+        print(f"  ✗ 曲库里没有「{name}」（曲库共 {len(songs)} 首）")
+        for s in jiko_lib.suggest(name, songs):
+            print(f"     你是想找：{jiko_lib.describe(s)} ？（python play.py --jiko-search 关键词）")
+        return None
+    top = hits[0]
+    # 只有「第一名的优势不明显」时才让人选，避免每次都多问一句
+    if len(hits) > 1 and top[0] < 1000 and top[0] - hits[1][0] < 250:
+        print(f"  曲库里匹配到 {len(hits)} 条，选一个：")
+        for i, (sc, s) in enumerate(hits, 1):
+            print(f"    {i:2d}. [{sc:4d}] {jiko_lib.describe(s)}")
+        try:
+            pick = input('  编号（回车=第 1 个，c=取消）> ').strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return None
+        if pick.lower() in ('c', 'cancel', '取消'):
+            return None
+        if pick.isdigit() and 1 <= int(pick) <= len(hits):
+            top = hits[int(pick) - 1]
+        elif pick:
+            print('  没听懂，按第 1 个处理')
+    song = top[1]
+    print(f"  选中：{jiko_lib.describe(song)}（匹配度 {top[0]}）")
+    path, note = jiko_lib.download(song, out_dir=SONG_DIR, overwrite=args.force)
+    print(f"  已放进曲谱文件夹：{path}")
+    return path
+
+
+def interactive_pick(args, pending=None):
+    """交互选曲：返回选定的谱面路径；None = 用户退出。pending 用于「再来一首」直接复用那行输入。"""
+    if pending is None:
+        print_banner()
+    while True:
+        if pending is None:
+            try:
+                raw = input('谱面 > ')
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return None
+        else:
+            raw = pending
+            pending = None
+        s = clean_input_path(raw)
+        low = s.lower()
+        if low in ('q', 'quit', 'exit', ':q', '退出', '结束'):
+            print('已退出。')
+            return None
+        # 1（或 “1 歌名”）→ 在线搜索下载
+        if s in ('1', '１') or low in ('search', 'download', 'dl', 'jiko', '搜索', '下载'):
+            got = download_by_name(args, None)
+            if got:
+                return got
+            continue
+        m = re.match(r'^[1１][\s\u3000]+(.+)$', s)
+        if m and not os.path.exists(win_path(m.group(1).strip())):
+            got = download_by_name(args, m.group(1).strip())
+            if got:
+                return got
+            continue
+        if not s or low in ('?', 'ls', 'list', '列表', 'help'):
+            list_songs()
+            continue
+        path, why = resolve_song_input(s)
+        if path:
+            return path
+        hits = find_local(os.path.splitext(s)[0] if os.path.splitext(s)[1] else s)
+        if len(hits) == 1:
+            print(f"  按名字匹配到本地曲目：{hits[0][0]}")
+            return hits[0][1]
+        if hits:
+            print(f"  songs/ 里有 {len(hits)} 首名字相近的，选一个：")
+            for i, (name, _) in enumerate(hits[:12], 1):
+                print(f"    {i:2d}. {name}")
+            try:
+                pick = input('  编号（回车=取消）> ').strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return None
+            if pick.isdigit() and 1 <= int(pick) <= len(hits[:12]):
+                return hits[int(pick) - 1][1]
+            continue
+        print(f"  ✗ {why}")
+        print("     提示：文件可以直接拖进本窗口；只记得歌名就输入 1 去曲库搜")
+
+
+def run_song(args):
+    """载入 → 导出 / 演奏。返回 main() 原来的返回值。"""
     score, bpm, desc, sc = load_song(args)
     args.bpm = args.bpm or bpm or 125.0
     args.bpm = float(args.bpm)
     print(f"谱面：{desc} · BPM {args.bpm:g} · {len(score['measures'])} 小节 · "
-          f"时序档位 {TIMINGS[args.timing]['name']}")
+          f"时序档位 {timing_of(args)['name']}")
     if args.export in ('jianpu',):
         import score as sm
         if sc is None:                      # 图片解析出来的事件表：逆向还原成简谱
@@ -551,6 +782,106 @@ def main():
         print(f"已导出事件表：{path}（可直接用 play.py --score 载入）")
         return path
     return play(score, args)
+
+
+def interactive_loop(args):
+    """交互主循环：选曲 → 演奏 → 问要不要再来一首（直接回车就退出）。"""
+    bpm_opt, pending, rc = args.bpm, None, None
+    while True:
+        path = interactive_pick(args, pending)
+        pending = None
+        if path is None:
+            return rc
+        args.song, args.score, args.bpm = path, None, bpm_opt
+        try:
+            rc = run_song(args)
+        except SystemExit as e:                      # load_song 里 sys.exit("找不到谱面")
+            print(f"  ✗ {e}")
+        except KeyboardInterrupt:
+            print('\n已中断。')
+        except Exception as e:
+            print(f"  ✗ {type(e).__name__}: {e}")
+        try:
+            nxt = input('\n再来一首？（直接回车退出 / 输入 1 或路径继续）> ')
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return rc
+        if not clean_input_path(nxt):
+            print('结束。')
+            return rc
+        pending = nxt
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--score', default=None, help='既有的 JSON 事件表（不给谱面时默认 score2.json）')
+    ap.add_argument('--song', default='', help='任意格式谱面：.json 事件表 / .mid / 简谱 .txt/.jianpu')
+    ap.add_argument('-i', '--interactive', action='store_true',
+                    help='交互式选曲：提示输入谱面路径（输入 1 = 按歌名从 jiko 曲库下载）'
+                         '；不给谱面且终端可交互时自动进入')
+    ap.add_argument('--jiko-search', default='', metavar='歌名',
+                    help='非交互：直接按歌名从 jiko 曲库搜索并下载到 songs/，然后弹它')
+    ap.add_argument('--force', action='store_true', help='下载曲库谱面时覆盖 songs/ 里的同名文件')
+    ap.add_argument('--refresh-lib', action='store_true', help='下载前忽略本地缓存，重新拉 jiko 曲库')
+    ap.add_argument('--list-songs', action='store_true', help='列出 songs/ 里现成的曲子')
+    ap.add_argument('--transpose', type=int, default=0, help='整体移调多少半音（默认 0）')
+    ap.add_argument('--base-octave', default='auto', help="口琴基准八度 auto|2|3|4|5（默认 auto 自动贴合音域）")
+    ap.add_argument('--melody', choices=['highest', 'lowest'], default='highest',
+                    help='MIDI 和弦时保留最高音(旋律,默认)还是最低音')
+    ap.add_argument('--midi-track', type=int, default=None, help='MIDI 指定轨（从 1 数；默认自动挑旋律轨）')
+    ap.add_argument('--track-name', default=None, help='MIDI 按音轨名挑（如 主旋律）')
+    ap.add_argument('--merge', action='store_true', help='MIDI 把所有非打击乐轨合并演奏')
+    ap.add_argument('--export', choices=['', 'ahk', 'lua', 'csv', 'timeline', 'jianpu', 'json'],
+                    default='', help='导出宏/时间线后退出：ahk(AutoHotkey) lua(GHUB) csv timeline jianpu json')
+    ap.add_argument('--export-path', default='', help='导出文件名（默认 曲名_格式.扩展名）')
+    ap.add_argument('--bpm', type=float, default=0, help='速度；0 = 用谱面自带（JSON 事件表回退 125）')
+    ap.add_argument('--countdown', type=float, default=6)
+    ap.add_argument('--lead', type=float, default=0.0, help='开演前额外留出的秒数')
+    ap.add_argument('--timing', choices=list(TIMINGS), default='standard',
+                    help='输入时序档位：standard(60fps,默认) / safe(30fps/卡顿) / aggressive(高帧率)')
+    ap.add_argument('--mode', choices=['hold', 'tap', 'once'], default='hold', help='（保留兼容，默认 hold）')
+    ap.add_argument('--pad', action='store_true', default=False, help='把每小节补齐到拍号（默认关）')
+    ap.add_argument('--no-pad', dest='pad', action='store_false')
+    ap.add_argument('--min-rest', type=float, default=0.0, metavar='拍',
+                    help='抹平短于该拍数的休止（0.25=只抹 0__，0.5=抹 0__/0_）；默认 0 保留谱面原样')
+    ap.add_argument('--from-measure', type=int, default=1)
+    ap.add_argument('--to-measure', type=int, default=10 ** 9)
+    ap.add_argument('--late', choices=['drop', 'shift'], default='drop',
+                    help='迟到处置：drop=丢掉迟到的音(默认) / shift=整条时间轴顺延')
+    ap.add_argument('--late-tol', type=float, default=0.05, help='允许的迟到秒数(默认0.05)')
+    ap.add_argument('--verbose-late', action='store_true')
+    ap.add_argument('--debug-timing', action='store_true', help='打印逐音延迟明细并导出 CSV')
+    ap.add_argument('--timing-log', default='', help='CSV 路径（默认 timing_log.csv）')
+    ap.add_argument('--dry-run', action='store_true')
+    ap.add_argument('--calib', action='store_true')
+    ap.add_argument('--abort', default='F10')
+    ap.add_argument('--input', choices=['vk', 'scan', 'both'], default='vk',
+                    help='键盘注入：vk(默认) / scan(DirectInput 型游戏) / both')
+    ap.add_argument('--fps', type=float, default=0.0,
+                    help='本机帧率/刷新率：配过就按帧率自适应算时序预算（会记住，只配一次）')
+    ap.add_argument('--reconfig', action='store_true', help='重新问一次帧率并覆盖本机配置')
+    args = ap.parse_args()
+    INPUT_MODE[0] = args.input
+    try:
+        winmm.timeBeginPeriod(1)
+    except Exception:
+        pass
+    if args.calib:
+        return calib(args)
+    if args.list_songs:
+        return list_songs()
+    args._fps = ensure_fps(args)            # 首次运行问一次帧率，之后读配置
+    if args.jiko_search:                        # 非交互：搜歌名 → 下载 → 直接接着弹
+        path = download_by_name(args, args.jiko_search)
+        if not path:
+            return 1
+        args.song = path
+    if not args.song and not args.score:
+        # 没指定谱面：交互式终端里直接进选曲提示；管道/脚本里保持老行为（score2.json），不阻塞
+        if args.interactive or sys.stdin.isatty():
+            return interactive_loop(args)
+        args.score = 'score2.json'
+    return run_song(args)
 
 
 if __name__ == '__main__':

@@ -500,6 +500,32 @@ def clamp_overlaps(sc: "Score") -> int:
     return n
 
 
+def squeeze_short_rests(sc: "Score", min_beats: float) -> int:
+    """把短于 min_beats 的休止（两音之间的空档）抹平：其后的音整体提前，旋律连起来。
+
+    图片转录出来的谱子会在快速音群里插一个 1/4 拍休止（`0__`），本意可能只是标记
+    "这里是下一个音"，但真弹出来就是 239ms 的空档 —— 快速跑句里听感就是"一顿"。
+    这是**可选的听感修正**，默认关（min_beats=0），因为休止是谱面内容，不该偷偷改。
+
+    返回被抹平的处数。只动 start，不动 dur / 音高。
+    """
+    ns = sc.notes
+    if len(ns) < 2 or min_beats <= 0:
+        return 0
+    shift, fixed = 0.0, 0
+    prev_end = ns[0].start + ns[0].dur
+    for i in range(1, len(ns)):
+        s = round(ns[i].start - shift, 6)
+        gap = s - prev_end
+        if 1e-6 < gap <= min_beats + 1e-9:
+            shift = round(shift + gap, 6)
+            s = round(ns[i].start - shift, 6)
+            fixed += 1
+        ns[i].start = s
+        prev_end = round(s + ns[i].dur, 6)
+    return fixed
+
+
 def parse_any(path: str, text: str | None = None, **kw) -> Score:
     """按扩展名/内容自动选解析器。"""
     sc = _parse_any_inner(path, text, **kw)
