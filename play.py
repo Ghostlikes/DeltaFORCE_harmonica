@@ -442,7 +442,8 @@ def list_songs():
     if not os.path.isdir(SONG_DIR):
         print(f"没有 {SONG_DIR} 目录"); return
     files = sorted(f for f in os.listdir(SONG_DIR)
-                   if f.lower().endswith(('.jianpu', '.txt', '.mid', '.midi'))
+                   if f.lower().endswith(('.jianpu', '.txt', '.mid', '.midi',
+                                          '.mp3', '.wav', '.ogg', '.flac', '.m4a'))
                    and not f.startswith(('_', '.')))
     for f in files:
         p = os.path.join(SONG_DIR, f)
@@ -466,7 +467,15 @@ def load_song(args):
         return tab, 125.0, f"{os.path.basename(src)}（既有事件表）", None
     import score as sm
     sc = sm.parse_any(src, track=args.midi_track, prefer_name=args.track_name,
-                      melody=args.melody, merge=args.merge)
+                      melody=args.melody, merge=args.merge, **_audio_kw(args))
+    if args.mp3_save and getattr(sc, "fmt", "") == "AUDIO":
+        from score import format_jianpu
+        base = os.path.splitext(os.path.basename(args.mp3_save))[0] or "音频导入"
+        out = os.path.join(SONG_DIR, base + ".jianpu")
+        with open(out, "w", encoding="utf-8", newline="\n") as fp:
+            fp.write(format_jianpu(sc))
+        print(f"  音频听出的简谱已存到：{out}")
+        print(f"  （{len(sc.notes)} 个音；想改速度改文件里的 BPM=，想改音区用 --transpose）")
     if args.min_rest > 0:                      # 抹平过短的休止（可选听感修正，默认关）
         fixed = sm.squeeze_short_rests(sc, args.min_rest)
         if fixed:
@@ -683,7 +692,8 @@ def find_local(key):
     if not os.path.isdir(SONG_DIR):
         return []
     files = sorted(f for f in os.listdir(SONG_DIR)
-                   if f.lower().endswith(('.jianpu', '.txt', '.mid', '.midi'))
+                   if f.lower().endswith(('.jianpu', '.txt', '.mid', '.midi',
+                                          '.mp3', '.wav', '.ogg', '.flac', '.m4a'))
                    and not f.startswith(('_', '.')))
     norm = lambda x: re.sub(r'[\s_\-（）()【】\[\]·]+', '', str(x)).lower()
     key = str(key or '').strip()
@@ -931,6 +941,12 @@ def interactive_pick(args, pending=None):
         print("     提示：文件可以直接拖进本窗口；只记得歌名就输入 1 去曲库搜")
 
 
+def _audio_kw(args):
+    """音频导入相关参数（仅当谱面是音频文件时才会用到）。"""
+    return dict(fmin=args.mp3_fmin, fmax=args.mp3_fmax,
+                conf_min=args.mp3_conf, min_dur=args.mp3_min_dur)
+
+
 def run_song(args):
     """载入 → 导出 / 演奏。返回 main() 原来的返回值。"""
     score, bpm, desc, sc = load_song(args)
@@ -991,7 +1007,19 @@ def interactive_loop(args):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--score', default=None, help='既有的 JSON 事件表（不给谱面时默认 data/score2.json）')
-    ap.add_argument('--song', default='', help='任意格式谱面：.json 事件表 / .mid / 简谱 .txt/.jianpu')
+    ap.add_argument('--song', default='',
+                    help='任意格式谱面：.json 事件表 / .mid / 简谱 .txt/.jianpu / **音频 .mp3 .wav .ogg .flac .m4a**')
+    ap.add_argument('--mp3-fmin', type=float, default=120.0, metavar='Hz',
+                    help='音频导入：只认这个频率以上的音（默认 120，滤掉鼓/低音；'
+                         '下限要盖住游戏最低可弹的 C3=131Hz）')
+    ap.add_argument('--mp3-fmax', type=float, default=1500.0, metavar='Hz',
+                    help='音频导入：只认这个频率以下的音（默认 1500；人声旋律可试 200~1000）')
+    ap.add_argument('--mp3-conf', type=float, default=0.55,
+                    help='音频导入：音高置信度门限（默认 0.55，调高更保守、更少误判）')
+    ap.add_argument('--mp3-min-dur', type=float, default=0.08, metavar='秒',
+                    help='音频导入：短于这个时长的音当噪声丢掉（默认 0.08）')
+    ap.add_argument('--mp3-save', default='', metavar='文件名',
+                    help='音频导入后把听出来的简谱另存到 songs/（如 --mp3-save 我的歌）')
     ap.add_argument('-i', '--interactive', action='store_true',
                     help='交互式选曲：提示输入谱面路径（输入 1 = 按歌名从 jiko 曲库下载）'
                          '；不给谱面且终端可交互时自动进入')

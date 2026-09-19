@@ -73,11 +73,29 @@ cd DeltaFORCE_harmonica
 python play.py --song songs/天空之城.jianpu --dry-run
 
 # 2) 实机：8 秒倒计时 → 切到游戏窗口并唤出口琴 → 开弹（F10 中止）
-python play.py --song songs/天空之城.jianpu --countdown 8
+| 播放某张谱面 | `python play.py --song songs/暗号.jianpu --countdown 8` |
+| 导入 MP3/音频 | `python play.py --song 某首歌.mp3 --dry-run`（见 §3.1b） |
 
 # 3) 交互模式：回车给路径；输入 1 按歌名从曲库下载
 python play.py
 ```
+
+### 3.1b 直接喂 MP3（把音频听成谱面）
+
+```bash
+python play.py --song "D:/音乐/某首歌.mp3" --dry-run                            # 先看听成了什么
+python play.py --song "D:/音乐/某首歌.mp3" --countdown 8 --debug-timing         # 实弹
+python play.py --song "D:/音乐/清唱.mp3" --mp3-fmin 200 --mp3-fmax 1000 --dry-run   # 只认人声区间
+python play.py --song "D:/音乐/某首歌.mp3" --mp3-save 我的歌                     # 听出来存进 songs/
+```
+
+不用装 ffmpeg：解码用 **PyAV**（自带 FFmpeg 库），音高检测是自己写的 **YIN**（纯 numpy/scipy）。
+支持 `.mp3 .wav .ogg .flac .m4a .aac .opus .wma`。
+
+**效果边界说清楚**：单声部、旋律突出的音频（清唱、单乐器、口琴录音）听得准
+（自测里合成旋律的音高命中 ≥90%）；编曲厚重的流行歌会**跟着最突出的那件乐器走**，只能当参考 ——
+想更干净就收窄区间（`--mp3-fmin/--mp3-fmax`）、提高门限（`--mp3-conf 0.7`）。
+一个音都没听出来时会**明确报错并给建议**，不会悄悄给你一份跑偏的谱。
 
 ## 4. 目录结构
 
@@ -164,6 +182,16 @@ python dev/check_invariants.py data/score2.json standard
 python dev/selftest2.py vk                     # 注入类自检（游戏未开时跑；ACE 会屏蔽全局钩子）
 python dev/timing_check2.py 1 4                # 空注入时序核对
 ```
+
+## 7.5 音频导入自测
+
+```bash
+python dev/selftest4.py
+```
+
+自己合成一段已知旋律（带谐波的口琴式音色）→ 编成 MP3 和 WAV → 用 `audio_in` 听回来对答案，
+所以**可复现、不含任何版权音频**。同时覆盖：YIN 音高精度（130/220/440/659/1200Hz）、
+`parse_any` 按扩展名分发、全静音明确报错、找不到文件明确报错。
 
 ## 8. 已知限制
 

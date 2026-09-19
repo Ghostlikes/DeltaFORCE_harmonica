@@ -535,9 +535,25 @@ def parse_any(path: str, text: str | None = None, **kw) -> Score:
     return sc
 
 
+AUDIO_EXT = (".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac", ".opus", ".wma")
+
+
 def _parse_any_inner(path: str, text: str | None = None, **kw) -> Score:
     name = os.path.basename(path) if path else "未命名"
     title = os.path.splitext(name)[0]
+    if path and path.lower().endswith(AUDIO_EXT):        # 音频：先于读文本，别把 MP3 当 UTF-8 读
+        from audio_in import read_song as read_audio
+        notes, info = read_audio(path, **{k: v for k, v in kw.items()
+                                          if k in ("bpm", "fmin", "fmax", "min_dur", "conf_min", "key")})
+        s = Score(title, info["bpm"], "4/4", info.get("key") or "1=C",
+                  [Note(p, b, d, False, "") for p, b, d in notes], path, "AUDIO", [])
+        s.warnings.append(
+            f"从音频听出来的：{info['seconds']:.1f}s / 有声帧 {info['voiced']}/{info['frames']} / "
+            f"平均置信度 {info['conf_mean']} / 丢掉过短段 {info['dropped_short']} 个"
+            f"（信息型，不是错误；单声部效果最好，混音复杂的会跟着最突出的乐器走）")
+        if info.get("bpm_estimated") and "bpm" not in kw:
+            s.warnings.append(f"BPM 是从起音间隔估的 {info['bpm_estimated']}，可用 --bpm 覆盖")
+        return s
     if text is None:
         text = open(path, encoding="utf-8", errors="replace").read()
     if path and path.lower().endswith((".mid", ".midi")):
