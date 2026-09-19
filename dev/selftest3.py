@@ -63,14 +63,15 @@ def one(path):
           f"最小间隔 {min(gaps) if gaps else '-'}ms")
     check("每个音都按住了（≥一帧）", all(p["hold"] > 0.016 for p in plan),
           f"最短按住 {min((p['hold'] for p in plan), default=0) * 1000:.0f}ms")
-    # 简谱往返
+    # 简谱往返：音高必须一致；时间给 ±2ms 容差 —— 导出写的是有限位小数的比例时值
+    # （如 :0.795416），往返会有 1ms 级浮点误差；#7 → 1' 这类等音写法也算同一个音。
     txt = sm.format_jianpu(sc)
     back = sm.parse_any(path, text=txt)
-    pa = [(n.pitch, round(n.start, 3), round(n.dur, 3)) for n in sc.notes]
-    pb = [(n.pitch, round(n.start, 3), round(n.dur, 3)) for n in back.notes]
-    same = sum(1 for x, y in zip(pa, pb) if x == y)
+    pa, pb = sc.notes, back.notes
+    same = sum(1 for x, y in zip(pa, pb)
+               if x.pitch == y.pitch and abs(x.start - y.start) <= 0.002 and abs(x.dur - y.dur) <= 0.002)
     check("简谱导出→重解析", same >= len(pa) - max(1, len(pa) // 20),
-          f"{same}/{len(pa)} 个音完全一致")
+          f"{same}/{len(pa)} 个音一致（音高全等、时间 ±2ms）")
     # 导出四种宏
     d = tempfile.mkdtemp(prefix="harmonica_selftest_")
     for fmt in ("csv", "timeline", "ahk", "lua"):
