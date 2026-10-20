@@ -737,18 +737,17 @@ def print_banner():
     print('  三角洲行动 · 口琴自动弹奏')
     print('-' * 66)
     print('  把谱面文件直接拖进本窗口，或粘贴路径（带引号也认）')
-    print('  输入 1        → 按歌名跨三个曲库搜（jiko 可下载 / shushu、shallow 给直达链接）')
+    print('  输入 1        → 按歌名联网找谱（visualizer 可下载 / shallow、JE 给原谱链接）')
     print('  输入 ?        → 列出 songs/ 里现成的曲子')
     print('  输入 q        → 退出')
     print('=' * 66)
 
 
 def download_by_name(args, name=None):
-    """按歌名跨三个曲库搜索（jiko / shushu / shallow），能下载的直接下到 songs/。
+    """按歌名跨可用来源搜索，兼容文本谱校验后保存到 songs/。
 
-    * **jiko** 的谱面在公开接口里 → 直接下载并返回落盘路径；
-    * **shushu.fan** 与 **delta-test.shallow.ink** 的谱面需要登录 / 是站内媒体文件 →
-      只列出结果并给出**直达链接**（配合 --paste 可以把站上的谱面文本直接弹）。
+    visualizer 提供兼容文本谱；shallow 只提供目录；JE 谱需人工补节奏。
+    后两者只给原谱链接，不假定匿名可下载或谱面能直接粘贴演奏。
     name=None 时就地提示输入歌名（交互模式）；给了歌名则完全不发问（--song-search 用）。
     """
     try:
@@ -756,7 +755,8 @@ def download_by_name(args, name=None):
     except Exception as e:
         print(f"  ✗ 曲库模块加载失败：{type(e).__name__}: {e}")
         return None
-    if name is None:
+    interactive = name is None
+    if interactive:
         try:
             name = input('歌名（直接回车取消）> ')
         except (EOFError, KeyboardInterrupt):
@@ -770,27 +770,27 @@ def download_by_name(args, name=None):
         hits = songlib.search(name, sources=srcs, limit=12, force=args.refresh_lib, verbose=True)
     except Exception as e:
         print(f"  ✗ 取不到曲库：{e}")
-        print("    可手动打开这三个站核对，或在有网时重试：")
+        print("    可手动打开可用来源核对，或在有网时重试：")
         for k, u in songlib.SOURCE_SITES.items():
             print(f"      {songlib.SOURCE_NAMES[k]}：{u}")
         return None
     if not hits:
-        print(f"  ✗ 三个曲库都没搜到「{name}」")
+        print(f"  ✗ 可用曲库未匹配到「{name}」")
         return None
     can_dl = [h for h in hits if h['chart']]
     links = [h for h in hits if not h['chart']]
     if not can_dl:
-        print(f"  搜到 {len(links)} 条，但都不在公开接口里（需要登录）：")
+        print(f"  搜到 {len(links)} 条，但只提供原谱链接：")
         for i, h in enumerate(links[:8], 1):
             print(f"    {i:2d}. {songlib.describe(h)}")
             print(f"        打开：{h['url']}")
-        print("    提示：在站点里打开曲谱后把谱面文本复制下来，用 --paste 直接弹（不用登录接口）。")
+        print("    提示：仅在已获得兼容且带节奏的文本谱时使用 --paste；JE 音高谱需先补节奏。")
         return None
     print(f"  可下载 {len(can_dl)} 条" + (f"，另有 {len(links)} 条只能给链接" if links else ""))
     for i, h in enumerate(can_dl, 1):
         print(f"    {i:2d}. {songlib.describe(h)}")
     top = can_dl[0]
-    if len(can_dl) > 1:                       # 有多个同名可下载项时才多问一句
+    if interactive and len(can_dl) > 1:       # --song-search 永不弹出选曲提示
         try:
             pick = input('  编号（回车=第 1 个，c=取消）> ').strip()
         except (EOFError, KeyboardInterrupt):
@@ -1021,16 +1021,16 @@ def main():
     ap.add_argument('--mp3-save', default='', metavar='文件名',
                     help='音频导入后把听出来的简谱另存到 songs/（如 --mp3-save 我的歌）')
     ap.add_argument('-i', '--interactive', action='store_true',
-                    help='交互式选曲：提示输入谱面路径（输入 1 = 按歌名从 jiko 曲库下载）'
+                    help='交互式选曲：提示输入谱面路径（输入 1 = 联网找谱）'
                          '；不给谱面且终端可交互时自动进入')
     ap.add_argument('--song-search', '--jiko-search', dest='jiko_search', default='', metavar='歌名',
-                    help='非交互：按歌名跨三个曲库搜索（jiko 可下载，shushu/shallow 给链接）')
-    ap.add_argument('--source', default='', choices=['', 'jiko', 'shushu', 'shallow'],
-                    help='限定曲库来源（默认三个都搜）')
+                    help='非交互：联网找谱；visualizer 可下载，shallow/JE 给原谱链接')
+    ap.add_argument('--source', default='', choices=['', 'shallow', 'visualizer', 'je', 'jiko', 'shushu'],
+                    help='限定来源 shallow / visualizer / je（旧来源会提示退役原因）')
     ap.add_argument('--paste', action='store_true',
                     help='把剪贴板里的谱面文本存进 songs/ 并直接弹（用于别站的曲谱）')
     ap.add_argument('--force', action='store_true', help='下载曲库谱面时覆盖 songs/ 里的同名文件')
-    ap.add_argument('--refresh-lib', action='store_true', help='下载前忽略本地缓存，重新拉 jiko 曲库')
+    ap.add_argument('--refresh-lib', action='store_true', help='忽略新鲜缓存，刷新所选来源目录')
     ap.add_argument('--list-songs', action='store_true', help='列出 songs/ 里现成的曲子')
     ap.add_argument('--transpose', type=int, default=0, help='整体移调多少半音（默认 0）')
     ap.add_argument('--base-octave', default='auto', help="口琴基准八度 auto|2|3|4|5（默认 auto 自动贴合音域）")
@@ -1103,4 +1103,6 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    result = main()
+    # 导出分支返回文件路径；只有整数结果才作为进程状态码。
+    sys.exit(result if isinstance(result, int) else 0)

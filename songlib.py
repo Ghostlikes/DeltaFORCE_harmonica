@@ -1,304 +1,433 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""songlib.py — 多源口琴曲库：按歌名跨站搜索，能下的直接下到 songs/。
+"""公开曲谱检索：shallow 目录、visualizer 文本谱、JE 待补节奏谱。
 
-三个曲源（都只用各家**公开**接口，不绕过登录、不伪造凭证）：
-
-| 来源 | 站点 | 目录 | 谱面本体 |
-|---|---|---|---|
-| `jiko` | https://jiko-official.top/delta | 公共曲库 JSON（116 首） | **可下载**（公共文件） |
-| `shushu` | https://shushu.fan/fun/harmonica | 页面 SSR 载荷（195 首） | 需登录 → 给直达链接 |
-| `shallow` | https://delta-test.shallow.ink/harmonica | 公开 API（196 首，匿名令牌） | 不在公开接口 → 给直达链接 |
-
-shallow 用的是它自己的公开流程：`POST /api/v1/auth/anonymous-token` 带一个设备指纹
-（随机 uuid，存在 ~/.harmonica_config.json 里），拿到 `anon_…` 令牌后带 `X-Anonymous-Token` 调
-`/api/v1/df/harmonica/songs`。这是它给网页端用的同一套机制，没有绕过任何鉴权。
-
-命令行自测：
-    python songlib.py --list                         列出三个源
-    python songlib.py --search 天空之城                跨源搜索
-    python songlib.py --search 处处吻 --source shallow 只搜某一源
-    python songlib.py --refresh                      重建目录缓存（_cache/）
+不绕过登录、不抓取受限谱面。jiko 在线抓取及 shushu 重复首屏适配器已移除。
+缓存与按需下载的谱面不随仓库分发。播放/导出仍使用原有解析器。
 """
 import argparse
+import base64
+from concurrent.futures import ThreadPoolExecutor
+import hashlib
+import html
+import http.client
 import json
+import math
 import os
-import re
+from pathlib import Path
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 
+import harmonica_config as hcfg
+import jiko_lib
+
 HERE = os.path.dirname(os.path.abspath(__file__))
-if HERE not in sys.path:
-    sys.path.insert(0, HERE)
-
-import jiko_lib                                              # jiko 曲源（已实现取数/下载）
-try:
-    import harmonica_config as hcfg                          # 复用同一个配置文件存设备指纹
-except Exception:                                            # pragma: no cover
-    hcfg = None
-
 CACHE_DIR = os.path.join(HERE, '_cache')
 CACHE_TTL = 6 * 3600
-UA = 'harmonica-autoplay/1.0 (+local; song-library search)'
-
-SHUSHU_BASE = 'https://shushu.fan'
-SHUSHU_PAGE = SHUSHU_BASE + '/fun/harmonica'
+STALE_TTL = 7 * 86400
+UA = 'DeltaFORCE-harmonica/2.0 (public score search)'
 SHALLOW_SITE = 'https://delta-test.shallow.ink/harmonica'
 SHALLOW_API = 'https://delta-test-api.shallow.ink'
+GITHUB_API = 'https://api.github.com'
+VISUALIZER_REPO = 'ChiZhou6/harmonica-visualizer'
+SOURCE_NAMES = {'shallow': 'DeltaForce 口琴曲库',
+                'visualizer': 'harmonica-visualizer 文本谱', 'je': '自由神社 JE（待补节奏）'}
+SOURCE_SITES = {'shallow': SHALLOW_SITE,
+                'visualizer': f'https://github.com/{VISUALIZER_REPO}/tree/main/songs',
+                'je': 'https://github.com/zytx121/je'}
+SOURCE_DOWNLOADABLE = {'shallow': False, 'visualizer': True, 'je': False}
+REMOVED_SOURCES = {
+    'jiko': 'jiko 已限制第三方抓取，在线适配器已移除；请访问 https://jiko-official.top/delta/',
+    'shushu': 'shushu 首屏目录与 shallow 重复，旧适配器已移除；请改用 --source shallow',
+}
 
-SOURCE_NAMES = {'jiko': 'jiko 公共曲库', 'shushu': 'shushu.fan 口琴曲谱', 'shallow': 'DeltaForce 口琴曲库'}
-SOURCE_SITES = {'jiko': 'https://jiko-official.top/delta', 'shushu': SHUSHU_PAGE, 'shallow': SHALLOW_SITE}
-SOURCE_DOWNLOADABLE = {'jiko': True, 'shushu': False, 'shallow': False}
 
-
-# ───────────────────────────── 通用小工具 ─────────────────────────────
-
-def http_get(url, timeout=30, tries=3, headers=None, data=None, verbose=False):
-    """GET/POST 拿 bytes；带重试。"""
-    hdr = {'User-Agent': UA, 'Accept': '*/*'}
+def http_get(url, timeout=12, tries=2, headers=None, data=None, verbose=False):
+    """有限超时/重试/响应体；401/403/404/429 等客户端错误不重复请求。"""
+    hdr = {'User-Agent': UA, 'Accept': 'application/json'}
     hdr.update(headers or {})
-    body = json.dumps(data).encode() if data is not None else None
+    body = json.dumps(data).encode('utf-8') if data is not None else None
     if body is not None:
         hdr.setdefault('Content-Type', 'application/json')
     last = None
-    for i in range(max(1, tries)):
+    for attempt in range(max(1, tries)):
         try:
-            req = urllib.request.Request(url, data=body, headers=hdr)
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                return r.read()
-        except Exception as e:                                # 网络抖动重试
-            last = e
-            if i + 1 < tries:
-                time.sleep(1.5 * (i + 1))
-    raise RuntimeError(f'取数失败 {url}: {last}')
-
-
-def _rsc_text(html: str) -> str:
-    """把 Next.js 的 RSC 载荷（self.__next_f.push([1,"…"])）拼回可读文本。
-
-    只还原 JS 转义，**不要**用 unicode_escape —— 那会把 UTF-8 中文按 latin-1 解成乱码。
-    """
-    segs = re.findall(r'self\.__next_f\.push\(\[1,\s*"((?:[^"\\]|\\.)*)"\s*\]\)', html)
-    blob = ''.join(segs)
-    m = {'n': '\n', 'r': '\r', 't': '\t', '"': '"', '\\': '\\', '/': '/', "'": "'"}
-    return re.sub(r'\\(u[0-9a-fA-F]{4}|.)',
-                  lambda x: chr(int(x.group(1)[1:], 16)) if x.group(1).startswith('u')
-                  else m.get(x.group(1), x.group(1)), blob)
-
-
-def _cache_path(name):
-    return os.path.join(CACHE_DIR, name)
+            with urllib.request.urlopen(urllib.request.Request(url, data=body, headers=hdr),
+                                        timeout=timeout) as resp:
+                raw = resp.read(4 * 1024 * 1024 + 1)
+            if len(raw) > 4 * 1024 * 1024:
+                raise ValueError('响应超过 4 MiB，停止读取')
+            return raw
+        except urllib.error.HTTPError as exc:
+            last = exc
+            if exc.code < 500:
+                hint = '（可能是匿名限流，请稍后重试或使用缓存）' if exc.code in (403, 429) else ''
+                raise RuntimeError(f'HTTP {exc.code}{hint}: {url}') from exc
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
+            last = exc
+        if attempt + 1 < max(1, tries):
+            time.sleep(attempt + 1)
+    raise RuntimeError(f'取数失败 {url}: {last}') from last
 
 
 def _cache_read(name, ttl=CACHE_TTL):
-    p = _cache_path(name)
-    if os.path.isfile(p) and (ttl <= 0 or time.time() - os.path.getmtime(p) < ttl):
-        try:
-            return json.load(open(p, encoding='utf-8'))
-        except Exception:
+    p = Path(CACHE_DIR) / name
+    try:
+        if ttl > 0 and time.time() - p.stat().st_mtime >= ttl:
             return None
-    return None
+        with p.open(encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
 
 
 def _cache_write(name, obj):
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    json.dump(obj, open(_cache_path(name), 'w', encoding='utf-8'), ensure_ascii=False)
+    """原子写入；只读缓存不应使成功的网络请求失败。"""
+    temp = None
+    try:
+        Path(CACHE_DIR).mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=CACHE_DIR,
+                                         suffix='.tmp', delete=False) as f:
+            temp = f.name
+            json.dump(obj, f, ensure_ascii=False)
+        os.replace(temp, Path(CACHE_DIR) / name)
+    except OSError:
+        pass
+    finally:
+        if temp and os.path.exists(temp):
+            try:
+                os.unlink(temp)
+            except OSError:
+                pass
 
 
-# ───────────────────────────── 曲源：jiko ─────────────────────────────
-
-def jiko_catalog(force=False, verbose=False):
-    songs, _src = jiko_lib.load_songs(force=force, verbose=verbose) or ([], '')
-    return [dict(src='jiko', id=s.get('remixCode') or s.get('title'), title=s.get('title') or '',
-                 artist=s.get('artist') or s.get('sharedBy') or '', bpm=s.get('bpm') or 0,
-                 difficulty='', dur_s=0, lo=0, hi=0, nps=0, chart=True,
-                 url=jiko_lib.BASE, raw=s) for s in songs]
+def _valid_catalog(items, source):
+    return isinstance(items, list) and all(
+        isinstance(s, dict) and s.get('src') == source and s.get('id')
+        and isinstance(s.get('title'), str) and isinstance(s.get('artist'), str)
+        and isinstance(s.get('chart'), bool) and isinstance(s.get('url'), str)
+        for s in items)
 
 
-# ───────────────────────────── 曲源：shushu ─────────────────────────────
-
-def shushu_catalog(force=False, verbose=False):
-    """shushu.fan 的口琴曲谱目录：页面把整库塞在 SSR 的 RSC 载荷里（195 首）。"""
-    cached = None if force else _cache_read('shushu.json')
-    if cached:
+def _cached_catalog(source, fetch, force=False, verbose=False, cache_name=None):
+    name = cache_name or source + '_v2.json'
+    cached = None if force else _cache_read(name)
+    if cached is not None and _valid_catalog(cached, source):
+        if verbose:
+            print(f'  {source}: {len(cached)} 首（缓存）')
         return cached
-    html = http_get(SHUSHU_PAGE, headers={'Accept': 'text/html'}, verbose=verbose).decode('utf-8', 'replace')
-    txt = _rsc_text(html)
-    out = []
-    for m in re.finditer(r'\{"songId":"([0-9a-f]{32})"[^{}]*\}', txt):
-        try:
-            o = json.loads(m.group(0))
-        except Exception:
-            continue
-        out.append(dict(src='shushu', id=o['songId'], title=o.get('title') or '',
-                        artist=o.get('authorName') or '', bpm=round(float(o.get('bpm') or 0), 1),
-                        difficulty=o.get('difficulty') or '',
-                        dur_s=round((o.get('durationMs') or 0) / 1000.0, 1),
-                        lo=o.get('pitchMin') or 0, hi=o.get('pitchMax') or 0,
-                        nps=round(float(o.get('notesPerSecond') or 0), 2),
-                        likes=o.get('likeCount') or 0, chart=False,
-                        url=f"{SHUSHU_PAGE}/{o['songId']}", raw=o))
-    dedup = {s['id']: s for s in out}
-    out = sorted(dedup.values(), key=lambda s: (-(s.get('likes') or 0), s['title']))
-    if out:
-        _cache_write('shushu.json', out)
-    return out
+    try:
+        result = fetch()
+        if not _valid_catalog(result, source):
+            raise RuntimeError('曲库数据结构无效')
+    except (RuntimeError, ValueError, KeyError, TypeError) as exc:
+        stale = _cache_read(name, STALE_TTL)
+        if stale is not None and _valid_catalog(stale, source):
+            if verbose:
+                print(f'  [warn] {source} 联网失败，使用 7 天内旧缓存（可能过时）：{exc}')
+            return stale
+        raise RuntimeError(f'{source} 目录不可用：{exc}') from exc
+    _cache_write(name, result)
+    if verbose:
+        print(f'  {source}: {len(result)} 首（在线）')
+    return result
 
 
-# ───────────────────────────── 曲源：shallow ─────────────────────────────
+def _json(raw):
+    try:
+        obj = json.loads(raw)
+    except (ValueError, UnicodeError) as exc:
+        raise RuntimeError('接口未返回有效 JSON（可能是错误页或访问限制）') from exc
+    if not isinstance(obj, dict):
+        raise RuntimeError('接口 JSON 不是对象')
+    if 'code' in obj and obj['code'] != 0:
+        raise RuntimeError(f"接口错误 code={obj['code']}: {str(obj.get('message') or '')[:120]}")
+    return obj
+
 
 def _shallow_token(force=False):
-    """shallow 的匿名令牌（其网页端用的同一套公开机制：设备指纹换令牌）。"""
-    cfg = hcfg.load() if hcfg else {}
+    cfg = hcfg.load()
     fp = cfg.get('device_id')
     if not fp:
         fp = str(uuid.uuid4())
-        if hcfg:
-            cfg['device_id'] = fp
-            hcfg.save(cfg)
+        cfg['device_id'] = fp
+        hcfg.save(cfg)
     cached = None if force else _cache_read('shallow_token.json', ttl=3600)
-    if cached and cached.get('fingerprint') == fp:
-        return cached.get('token')
-    data = http_get(SHALLOW_API + '/api/v1/auth/anonymous-token', data={'fingerprint': fp},
-                    headers={'Origin': SHALLOW_SITE.rsplit('/harmonica', 1)[0],
-                             'Referer': SHALLOW_SITE}).decode('utf-8', 'replace')
-    tok = (json.loads(data).get('data') or {}).get('token')
-    if not tok:
-        raise RuntimeError(f'拿不到匿名令牌：{data[:200]}')
+    if isinstance(cached, dict) and cached.get('fingerprint') == fp and cached.get('token'):
+        return cached['token']
+    obj = _json(http_get(SHALLOW_API + '/api/v1/auth/anonymous-token', data={'fingerprint': fp}))
+    data = obj.get('data')
+    tok = data.get('token') if isinstance(data, dict) else None
+    if not isinstance(tok, str) or not tok:
+        raise RuntimeError('匿名接口未返回令牌')
     _cache_write('shallow_token.json', dict(token=tok, fingerprint=fp))
     return tok
 
 
+def _shallow_page(url, token):
+    """匿名令牌过期只刷新一次；不尝试使用用户登录态。"""
+    try:
+        raw = http_get(url, headers={'X-Anonymous-Token': token})
+    except RuntimeError as exc:
+        if not isinstance(exc.__cause__, urllib.error.HTTPError) or exc.__cause__.code != 401:
+            raise
+        token = _shallow_token(force=True)
+        return _json(http_get(url, headers={'X-Anonymous-Token': token})), token
+    try:
+        obj = json.loads(raw)
+    except (ValueError, UnicodeError) as exc:
+        raise RuntimeError('目录接口未返回有效 JSON') from exc
+    if isinstance(obj, dict) and obj.get('code') == 401:
+        token = _shallow_token(force=True)
+        raw = http_get(url, headers={'X-Anonymous-Token': token})
+    return _json(raw), token
+
+
+def _number(value):
+    result = float(value or 0)
+    if not math.isfinite(result) or result < 0:
+        raise ValueError('曲库数值不是有限非负数')
+    return result
+
+
 def shallow_catalog(force=False, verbose=False):
-    cached = None if force else _cache_read('shallow.json')
-    if cached:
-        return cached
-    tok = _shallow_token(force=force)
-    hdr = {'X-Anonymous-Token': tok, 'Origin': SHALLOW_SITE.rsplit('/harmonica', 1)[0], 'Referer': SHALLOW_SITE}
-    out, page, size = [], 1, 100
-    while True:
-        url = f'{SHALLOW_API}/api/v1/df/harmonica/songs?page={page}&pageSize={size}'
-        d = json.loads(http_get(url, headers=hdr, verbose=verbose).decode('utf-8', 'replace'))
-        data = d.get('data') or {}
-        items = data.get('items') or []
-        for o in items:
-            out.append(dict(src='shallow', id=o.get('songId'), title=o.get('title') or '',
-                            artist=o.get('authorName') or '', bpm=round(float(o.get('bpm') or 0), 1),
-                            difficulty=o.get('difficulty') or '',
-                            dur_s=round((o.get('durationMs') or 0) / 1000.0, 1),
-                            lo=o.get('pitchMin') or 0, hi=o.get('pitchMax') or 0,
-                            nps=round(float(o.get('notesPerSecond') or 0), 2),
-                            plays=o.get('playCount') or 0, chart=False,
-                            url=f"{SHALLOW_SITE}/{o.get('songId')}", raw=o))
-        total = data.get('total') or 0
-        if not items or len(out) >= total:
-            break
-        page += 1
-        if page > 20:                                        # 防御：别无限翻页
-            break
-    if out:
-        _cache_write('shallow.json', out)
-    return out
+    def fetch():
+        token = _shallow_token(force=force)
+        out, seen = [], set()
+        for page in range(1, 101):
+            obj, token = _shallow_page(
+                f'{SHALLOW_API}/api/v1/df/harmonica/songs?page={page}&pageSize=100', token)
+            data = obj.get('data')
+            if not isinstance(data, dict) or not isinstance(data.get('items'), list):
+                raise RuntimeError('目录缺少 data.items')
+            total = data.get('total')
+            if type(total) is not int or total < 0:
+                raise RuntimeError('目录缺少有效 total')
+            items = data['items']
+            for o in items:
+                sid = o.get('songId') if isinstance(o, dict) else None
+                if not isinstance(sid, str) or not sid or sid in seen:
+                    raise RuntimeError('分页重复或曲目 ID 无效，未保存不完整目录')
+                seen.add(sid)
+                out.append(dict(src='shallow', id=sid, title=html.unescape(str(o.get('title') or '')),
+                                artist=html.unescape(str(o.get('authorName') or '')),
+                                bpm=round(_number(o.get('bpm')), 1), difficulty=o.get('difficulty') or '',
+                                dur_s=round(_number(o.get('durationMs'))/1000, 1),
+                                lo=o.get('pitchMin') or 0, hi=o.get('pitchMax') or 0,
+                                chart=False, plays=_number(o.get('playCount')),
+                                url=SHALLOW_SITE + '/' + urllib.parse.quote(sid, safe=''),
+                                access='目录可检索；谱面请到原站查看'))
+            if len(out) == total:
+                return out
+            if not items or len(out) > total:
+                raise RuntimeError('分页不完整或总数变动，请刷新重试')
+        raise RuntimeError('分页超过 100 页，未保存不完整目录')
+    return _cached_catalog('shallow', fetch, force, verbose)
 
 
-# ───────────────────────────── 统一搜索 ─────────────────────────────
+def visualizer_catalog(force=False, verbose=False):
+    def fetch():
+        tree = _json(http_get(f'{GITHUB_API}/repos/{VISUALIZER_REPO}/git/trees/main?recursive=1'))
+        if tree.get('truncated') or not isinstance(tree.get('tree'), list):
+            raise RuntimeError('GitHub 文件目录被截断或无效')
+        out = []
+        for entry in tree['tree']:
+            path = entry.get('path', '')
+            if entry.get('type') != 'blob' or not path.startswith('songs/') or not path.endswith(('.txt', '.jianpu')):
+                continue
+            quoted = urllib.parse.quote(path, safe='/')
+            out.append(dict(src='visualizer', id=path, title=Path(path).stem, artist='', bpm=0,
+                            chart=True, sha=entry['sha'],
+                            url=f'https://github.com/{VISUALIZER_REPO}/blob/main/{quoted}',
+                            access='公开文本谱；下载后解析校验'))
+        if not out:
+            raise RuntimeError('上游目录没有兼容的文本谱')
+        return out
+    return _cached_catalog('visualizer', fetch, force, verbose)
+
+
+def je_search(query, limit=15, force=False, verbose=False):
+    """标题检索；缺节奏的音高谱只给链接，不伪造等时值。"""
+    query = query.strip()
+    if not query:
+        return []
+    limit = min(50, max(1, limit))
+    cache_key = hashlib.sha256((query + ':' + str(limit)).encode()).hexdigest()
+    def fetch():
+        words = query.replace('"', ' ').replace('\\', ' ').strip()
+        params = urllib.parse.urlencode({'q': f'repo:zytx121/je is:issue in:title "{words}"',
+                                         'per_page': limit})
+        obj = _json(http_get(GITHUB_API + '/search/issues?' + params))
+        if obj.get('incomplete_results') or not isinstance(obj.get('items'), list):
+            raise RuntimeError('GitHub 搜索结果不完整或无效')
+        return [dict(src='je', id=str(o['number']), title=o['title'], artist='', bpm=0,
+                     chart=False, url=f"https://github.com/zytx121/je/issues/{int(o['number'])}",
+                     access='音高文本，需人工核对并补充节奏') for o in obj['items']]
+    return _cached_catalog('je', fetch, force, verbose, 'je_' + cache_key + '.json')
+
 
 def catalog(source, force=False, verbose=False):
-    return {'jiko': jiko_catalog, 'shushu': shushu_catalog, 'shallow': shallow_catalog}[source](force=force, verbose=verbose)
+    if source in REMOVED_SOURCES:
+        raise ValueError(REMOVED_SOURCES[source])
+    if source == 'je':
+        raise ValueError('JE 为按关键词检索来源，请用 --search 歌名 --source je')
+    providers = {'shallow': shallow_catalog, 'visualizer': visualizer_catalog}
+    if source not in providers:
+        raise ValueError('未知曲库来源：' + str(source))
+    return providers[source](force=force, verbose=verbose)
 
 
-def catalogs(sources=None, force=False, verbose=False):
-    out = []
-    for s in (sources or list(SOURCE_NAMES)):
-        try:
-            out += catalog(s, force=force, verbose=verbose)
-        except Exception as e:
-            if verbose:
-                print(f'  [warn] {s} 目录取不到：{e}')
+def catalogs(sources=None, force=False, verbose=False, query='', limit=15):
+    selected = list(SOURCE_NAMES) if sources is None else list(dict.fromkeys(sources))
+    for source in selected:
+        if source not in SOURCE_NAMES:
+            raise ValueError(REMOVED_SOURCES.get(source, '未知曲库来源：' + source))
+    if not selected:
+        return []
+    def fetch(source):
+        if source == 'je':
+            return je_search(query, limit, force, verbose)
+        return catalog(source, force=force, verbose=verbose)
+    out, failures = [], []
+    with ThreadPoolExecutor(max_workers=len(selected)) as pool:
+        jobs = [(s, pool.submit(fetch, s)) for s in selected]
+        for source, job in jobs:
+            try:
+                out.extend(job.result())
+            except Exception as exc:
+                failures.append(source)
+                if verbose:
+                    print(f'  [warn] {source} 失败：{exc}')
+    if len(failures) == len(selected):
+        raise RuntimeError('所有所选曲库请求失败，请检查网络或稍后重试（不是没有匹配曲目）')
     return out
 
 
 def search(query, sources=None, limit=15, force=False, verbose=False):
-    """跨源按歌名/作者搜，按匹配度排序。返回列表（含来源、难度、音域、时长、能否下载）。"""
-    pool = catalogs(sources=sources, force=force, verbose=verbose)
-    scored = []
+    if not jiko_lib.normalize(query) or limit <= 0:
+        return []
+    pool = catalogs(sources, force, verbose, query=query, limit=limit)
+    scored, seen = [], set()
     for s in pool:
-        sc = jiko_lib.match_score({'title': s['title'], 'artist': s['artist']}, query)
+        identity = (s['src'], s['id'])
+        if identity in seen:
+            continue
+        seen.add(identity)
+        sc = jiko_lib.match_score(s, query)
         if sc > 0:
             scored.append((sc, s))
-    # 同分时：能下载的优先，其次热度高的
-    scored.sort(key=lambda x: (-x[0], not x[1]['chart'], -(x[1].get('likes') or x[1].get('plays') or 0)))
-    return [s for _sc, s in scored[:limit]]
+    scored.sort(key=lambda x: (-x[0], not x[1]['chart'], -float(x[1].get('plays') or 0), x[1]['title']))
+    return [s for _, s in scored[:limit]]
 
 
 def describe(s):
-    bits = [f"{s['title']}"]
+    bits = [s['title']]
     if s.get('artist'):
-        bits.append(f"— {s['artist']}")
-    bits.append(f"· {SOURCE_NAMES[s['src']]}")
+        bits.append('— ' + s['artist'])
+    bits.append('· ' + SOURCE_NAMES[s['src']])
     if s.get('bpm'):
         bits.append(f"· {s['bpm']:g}BPM")
     if s.get('difficulty'):
-        bits.append(f"· {s['difficulty']}")
+        bits.append('· ' + s['difficulty'])
     if s.get('dur_s'):
-        bits.append(f"· {int(s['dur_s'])//60}:{int(s['dur_s'])%60:02d}")
-    if s.get('lo') and s.get('hi'):
-        bits.append(f"· 音域 {s['lo']}..{s['hi']}")
-    bits.append('· 可下载 ✔' if s['chart'] else '· 需登录，只能给链接')
+        seconds = int(s['dur_s'])
+        bits.append(f'· {seconds//60}:{seconds%60:02d}')
+    bits.append('· 可下载 ✔' if s['chart'] else '· ' + s.get('access', '仅提供原谱链接'))
     return ' '.join(bits)
 
 
 def download(s, out_dir=None, overwrite=False, verbose=True):
-    """能下的下到 songs/；不能在公开接口拿到的，返回 (None, 原因)。"""
-    if s['src'] == 'jiko':
-        return jiko_lib.download(s['raw'], out_dir=out_dir, overwrite=overwrite, verbose=verbose)
-    return None, (f"{SOURCE_NAMES[s['src']]} 的谱面不在公开接口里（需登录 / 是站内媒体文件），"
-                  f"已给你直达链接：{s['url']}")
+    if s.get('src') != 'visualizer' or not s.get('chart'):
+        return None, '此来源不提供自动下载；请查看原谱：' + str(s.get('url', ''))
+    try:
+        # 内容 SHA 校验；URL 固定在上游，不信任远端任意下载链接。
+        sha = s.get('sha', '')
+        if len(sha) != 40 or any(c not in '0123456789abcdef' for c in sha):
+            raise ValueError('曲谱 Git SHA 无效，请刷新目录')
+        obj = _json(http_get(f'{GITHUB_API}/repos/{VISUALIZER_REPO}/git/blobs/{sha}'))
+        if obj.get('encoding') != 'base64':
+            raise ValueError('GitHub 返回了不支持的文件编码')
+        blob = base64.b64decode(obj['content'])
+        actual = hashlib.sha1(b'blob ' + str(len(blob)).encode() + b'\0' + blob).hexdigest()
+        if actual != sha:
+            raise ValueError('曲谱 Git 内容校验失败')
+        text = blob.decode('utf-8-sig')
+        if text.lstrip().startswith('<'):
+            raise ValueError('响应是网页而不是曲谱')
+        import score
+        parsed = score.parse_any(str(s['id']), text=text)
+        if not parsed.notes or not any(n.pitch is not None for n in parsed.notes):
+            raise ValueError('谱面未解析出可演奏音符')
+        parsed.title = str(s['title']).replace('\n', ' ').replace('\r', ' ')
+        canonical = score.format_jianpu(parsed)
+        back = score.parse_any('download.jianpu', text=canonical)
+        before = [n for n in parsed.notes if n.pitch is not None]
+        after = [n for n in back.notes if n.pitch is not None]
+        if len(before) != len(after) or any(
+                a.pitch != b.pitch or abs(a.start - b.start) > 0.002 or abs(a.dur - b.dur) > 0.002
+                for a, b in zip(before, after)):
+            raise ValueError('格式转换未通过音高/时值往返校验，未保存谱面')
+        target_song = dict(title=parsed.title, bpm=parsed.bpm, key=parsed.key, meter=parsed.meter,
+                           jianpu=jiko_lib._body_of(canonical), artist=VISUALIZER_REPO,
+                           source_url=s['url'])
+        return jiko_lib.download(target_song, out_dir, overwrite, verbose)
+    except (RuntimeError, ValueError, KeyError, TypeError, OSError) as exc:
+        return None, '下载/校验失败：' + str(exc)
 
-
-# ───────────────────────────── CLI ─────────────────────────────
 
 def _cli(argv=None):
-    ap = argparse.ArgumentParser(description='多源口琴曲库搜索（jiko / shushu / shallow）')
-    ap.add_argument('--search', '-s', default='', help='按歌名或作者搜索')
-    ap.add_argument('--source', default='', help='限定来源：jiko / shushu / shallow（默认全部）')
-    ap.add_argument('--list', action='store_true', help='列出各源曲目数量与前几首')
-    ap.add_argument('--refresh', action='store_true', help='强制重建目录缓存')
+    ap = argparse.ArgumentParser(description='曲谱检索（shallow / visualizer / je）')
+    ap.add_argument('--search', '-s', default='', help='歌名/作者关键词')
+    ap.add_argument('--source', default='', choices=[''] + list(SOURCE_NAMES) + list(REMOVED_SOURCES))
+    ap.add_argument('--list', action='store_true', help='列出来源及可枚举目录的实时数量')
+    ap.add_argument('--refresh', action='store_true', help='忽略新鲜缓存；失败可退回 7 天内缓存')
     ap.add_argument('--limit', type=int, default=15)
-    ap.add_argument('--download', action='store_true', help='搜到可下载的就下到 songs/')
-    ap.add_argument('-o', '--out', default=os.path.join(HERE, 'songs'), help='下载目录')
+    ap.add_argument('--download', action='store_true', help='下载排名最高的可下载结果（不演奏）')
+    ap.add_argument('-o', '--out', default=os.path.join(HERE, 'songs'))
     a = ap.parse_args(argv)
-    srcs = [a.source] if a.source else None
-
+    if a.limit < 1:
+        ap.error('--limit 必须大于 0')
+    sources = [a.source] if a.source else None
+    if a.source in REMOVED_SOURCES:
+        print(REMOVED_SOURCES[a.source])
+        return 2
     if a.list or not a.search:
-        for s in (srcs or list(SOURCE_NAMES)):
+        failed = 0
+        for source in sources or list(SOURCE_NAMES):
+            if source == 'je':
+                print(f'{SOURCE_NAMES[source]}：按关键词搜索，不枚举全库   {SOURCE_SITES[source]}')
+                continue
             try:
-                items = catalog(s, force=a.refresh, verbose=True)
-                print(f'{SOURCE_NAMES[s]:<24} {len(items):>4} 首   {SOURCE_SITES[s]}')
-                for it in items[:3]:
-                    print('     ', describe(it))
-            except Exception as e:
-                print(f'{SOURCE_NAMES[s]:<24} 取不到：{e}')
-        return 0
-
-    hits = search(a.search, sources=srcs, limit=a.limit, force=a.refresh, verbose=True)
+                items = catalog(source, force=a.refresh, verbose=True)
+                print(f'{SOURCE_NAMES[source]}：{len(items)} 首   {SOURCE_SITES[source]}')
+            except (RuntimeError, ValueError) as exc:
+                failed += 1
+                print(f'{source} 失败：{exc}')
+        return 1 if failed else 0
+    try:
+        hits = search(a.search, sources, a.limit, a.refresh, verbose=True)
+    except (RuntimeError, ValueError) as exc:
+        print(str(exc))
+        return 2
     if not hits:
-        print(f'三个源都没搜到「{a.search}」')
+        print(f'可用来源未匹配到「{a.search}」；可缩短关键词或指定 --source 重试')
         return 1
     print(f'搜到 {len(hits)} 条：')
-    for i, h in enumerate(hits, 1):
-        print(f'  {i:>2}. {describe(h)}')
+    for i, hit in enumerate(hits, 1):
+        print(f'  {i}. {describe(hit)}\n     {hit["url"]}')
     if a.download:
-        for h in hits:
-            if h['chart']:
-                path, msg = download(h, out_dir=a.out)
-                print(f"  下载：{msg}")
+        for hit in hits:
+            if hit['chart']:
+                path, message = download(hit, a.out)
+                print(message or path)
                 return 0 if path else 1
-        print('  搜到的都不可下载，去链接里找吧')
+        print('结果仅提供原谱链接，没有可自动下载的兼容谱面')
+        return 1
     return 0
 
 

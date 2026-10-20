@@ -99,7 +99,7 @@ python dev/check_invariants.py data/score2.json standard        # 独立校验�
 | `dev/check_invariants.py` / `dev/timing_check2.py` / `dev/selftest3.py` | 校验器 / 时序探针 / 端到端自检 |
 | `songs/` | 15 首现成谱面（jiko 站点曲库 6 首 + viz2/DFH 9 首） |
 | `refs/` | 三份参考实现的快照（midikey-player、harmonica-visualizer、jiko app.js） |
-| `jiko_lib.py` | jiko 站点公共曲库直连：按歌名搜索 → 下载成可弹简谱（116 首，不用登录） |
+| `jiko_lib.py` | 兼容匹配/保存工具；jiko 在线抓取已退役（见曲源维护.md） |
 | `harmonica_config.py` | 本机帧率 → 时序档位（首次运行问一次，存 `~/.harmonica_config.json`） |
 
 ## 8. 交互式入口 + 帧率档位 + 短休止（2026-09-19）
@@ -108,9 +108,8 @@ python dev/check_invariants.py data/score2.json standard        # 独立校验�
 
 * 不带参数直接跑 → 提示输入谱面路径；**带引号也能识别**：`"…"` `'…'` `“…”` `‘…’` `「…」`（套两层也认），
   也认 Git-Bash 的 `/f/…` 写法和 `~`；不带扩展名、只写歌名（`天空之城`）都能解析到 `songs/` 里的文件。
-* 输入 `1` → 提示输入歌名 → 在 https://jiko-official.top/delta 公共曲库搜索（无需账号）→ 存进 `songs/`
-  并**直接接着弹**。同名正文不同的**绝不覆盖**，另存 `曲名(曲库).jianpu`；正文相同直接复用；
-  多条匹配列编号选；搜不到给相近曲名。
+* 输入 `1` → 联网找谱：visualizer 的兼容文本谱可下载并接着弹；shallow/JE 只给原谱链接。
+  同名不同谱、速度或调号另存；本地文件不静默覆盖。多条可下载项仅在交互模式询问编号。
 * 空输入 / `?` → 列 `songs/` 曲目；`q` → 退出；弹完问「再来一首？」（直接回车退出）。
 * 管道/脚本里跑（stdin 非终端）**不提示**，退回老行为（`data/score2.json`），不卡住自动化。
 
@@ -169,13 +168,13 @@ python play.py --song songs/父亲.jianpu --min-rest 1.5    # 整拍休止也抹
 
 ## 9. 多源曲库与剪贴板导入（2026-09 加）
 
-* `python play.py` 交互里输入 `1` → 输歌名 → **三个曲库一起搜**（jiko 116 / shushu 195+ / shallow 196+，实时）：
-  能下载的（jiko）直接下到 `songs/` 并接着弹；不能下载的（shushu、shallow 需登录）给出直达链接。
-* 非交互写法：`python play.py --song-search 歌名 [--source jiko|shushu|shallow] [--dry-run]`
-* 单看曲库：`python songlib.py --list` / `python songlib.py --search 关键词`（缓存 6 小时，`--refresh` 重建）。
-* **别站谱面也能弹**：在站点里复制谱面文本 → `python play.py --paste` → 自动存进 `songs/` 并解析开弹
-  （不会写进坏数据：解析不通过就不落盘）。
-* 曲源与许可细节见 `docs/来源出处与许可.md`；两个第三方站都只用公开接口，不绕过登录。
+* `python play.py` 交互里输入 `1` → 输歌名 → 检索 shallow、visualizer、JE。
+* 非交互：`python play.py --song-search 歌名 --source visualizer --dry-run`；不会询问选曲编号。
+* 只搜索/下载（不演奏）：`python songlib.py --search 歌名 [--download]`。
+* 来源目录：`python songlib.py --list --refresh`；JE 按关键词检索，不枚举全库。
+* `--paste` 仅用于已取得的兼容带节奏文本谱，不适用于直接粘贴缺时值的 JE 音高谱。
+* jiko 在线抓取及 shushu 重复首屏适配器已移除；本地曲谱不受影响。
+* 接口、缓存、来源权限和验收说明见 [曲源维护.md](曲源维护.md)。
 
 
 ---

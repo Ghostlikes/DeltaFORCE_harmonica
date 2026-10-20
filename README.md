@@ -26,17 +26,19 @@ python play.py                 # 回车 → 提示输入谱面路径；输入 1 
 1. **中文交互入口**：`python play.py` 直接回车 → 提示输入谱面路径；**带引号也能识别**
    （`"…"` `'…'` `“…”` `‘…’` `「…」`，套两层也认），也认 Git-Bash 的 `/f/…` 和 `~`；
    不带扩展名、只写歌名都能命中 `songs/`。
-2. **三个曲库一起搜**：输入 `1` → 输歌名 → 跨三个公开曲库检索（**500+ 条**，数量实时增长），能下的直接下到
-   `songs/` 并**接着弹**；不能下的给出**直达链接**：
+2. **按歌名联网找谱**：输入 `1` → 输歌名；也可用独立检索命令（不发按键）。
 
-   | 曲库 | 目录 | 谱面 |
+   | 来源 | 用途 | 可自动下载 |
    |---|---|---|
-   | [jiko-official.top/delta](https://jiko-official.top/delta) | 116 首 | **可下载**（公开 JSON，免登录） |
-   | [shushu.fan/fun/harmonica](https://shushu.fan/fun/harmonica) | 195+ 首 | 需登录 → 给直达链接 |
-   | [delta-test.shallow.ink/harmonica](https://delta-test.shallow.ink/harmonica) | 196+ 首 | 不在公开接口 → 给直达链接 |
+   | [shallow 口琴曲库](https://delta-test.shallow.ink/harmonica) | 完整分页目录、作者/难度/时长检索 | 否，只给原谱链接 |
+   | [harmonica-visualizer 文本谱](https://github.com/ChiZhou6/harmonica-visualizer/tree/main/songs) | 兼容的文本谱，按需下载、解析、音高/时值往返校验 | 是 |
+   | [自由神社 JE](https://github.com/zytx121/je) | 按歌名检索音高文本 | 否，须人工核对并补节奏 |
 
-   同名文件正文不同时**绝不覆盖**（另存 `曲名(曲库).jianpu`）；两站同名曲的 `songId` 相同（同库镜像）。
-   另两站的谱面也能弹：在页面里把谱面文本复制下来 → `python play.py --paste` 直接弹（不用登录接口）。
+   已移除 **jiko 在线抓取**（站点已限制第三方访问）和 **shushu 重复首屏目录**；不再把提示占位数据当曲谱。
+   本地已有曲谱与简谱语法仍可用，不删除用户文件。同名不同谱/速度/调号另存，不静默覆盖。
+   来源并发检索，单源失败不拖垮其他来源；全失败与“没有匹配”分开报告。
+   目录缓存 6 小时，网络失败可回退 7 天内旧缓存并提示；`--refresh` 主动刷新。
+   数量以 `python songlib.py --list --refresh` 实取为准，不叠加镜像或写死数量。
 3. **帧率自适应时序**：目标程序按帧采样输入，"修饰键提前量 / 最短按住 / 抬-按间隔"本质都是
    **帧长的倍数**，比例由上游 `InputTiming.cs` 三个档位反推（`帧长×2.4 / 2.7 / 2.4`）。
    首次运行问一次帧率并存进 `~/.harmonica_config.json`：
@@ -106,8 +108,8 @@ DeltaFORCE_harmonica/
 ├── score.py                    谱面解析与编译（5 种格式 → 音符 → 按键事件表）
 ├── keymap.py                   键位与音高映射（音域 48..85、左中右键语义）
 ├── harmonica_config.py         帧率 → 时序档位（首次问一次，记住）
-├── songlib.py                 多源曲库：jiko / shushu / shallow 一起搜（能下的直接下）
-├── jiko_lib.py                 jiko 曲源：搜索 / 下载 / 正文去重
+├── songlib.py                 联网曲谱：shallow / visualizer / JE（下载能力分别标注）
+├── jiko_lib.py                 兼容工具：匹配 / 非覆盖保存（旧在线接口已退役）
 ├── midi_in.py                  标准 MIDI 读取器（纯 Python，无第三方依赖）
 ├── macros.py                   导出 AHK / Lua / CSV / 时间线 / 简谱
 ├── 弹奏.bat                    一键启动菜单（含各种自检入口）
@@ -169,8 +171,8 @@ python play.py --song songs/暗号.jianpu --countdown 8 --debug-timing
 | `--timing safe` | 更保守的内置档（30fps：70/80/70） |
 | `--fps 165` / `--reconfig` | 改/重问帧率；不给 `--timing` 就按它自适应 |
 | `--export ahk,lua…` | 导出宏/时间线/简谱/事件表（`--export csv` 等，单值） |
-| `--song-search 歌名` | 非交互跨三库搜索（`--jiko-search` 是同义别名），`--source jiko\|shushu\|shallow` 限定来源 |
-| `--paste` | 把**剪贴板里的谱面文本**存进 `songs/` 并直接弹（用于只能登录看谱的站点） |
+| `--song-search 歌名` | 非交互联网搜索（`--jiko-search` 保留为历史别名），`--source shallow\|visualizer\|je` 限定来源 |
+| `--paste` | 把**兼容且带节奏的谱面文本**存进 `songs/` 并弹奏；JE 缺节奏谱须先整理 |
 | `--list-songs` | 列出现成曲目 |
 
 ## 7. 校验与自检（`dev/`）
@@ -182,6 +184,15 @@ python dev/check_invariants.py data/score2.json standard
 python dev/selftest2.py vk                     # 注入类自检（游戏未开时跑；ACE 会屏蔽全局钩子）
 python dev/timing_check2.py 1 4                # 空注入时序核对
 ```
+
+### 联网检索回归与实际验收
+
+```bash
+python -m unittest discover -s dev -p "test_*.py" -v   # 离线合成数据，不发按键
+python dev/check_song_sources.py --refresh --downloads  # 实际联网；临时谱面自动清理
+```
+
+[维护记录与使用例子](docs/曲源维护.md)。GitHub 匿名接口可能限流，程序不会绕过限制。
 
 ## 7.5 音频导入自测
 
@@ -207,11 +218,9 @@ python dev/selftest4.py
 `BuildSchedule` 规则、MIDI 选轨）、**ChiZhou6/harmonica-visualizer**、**jiko-official.top/delta**
 （简谱 DSL 语义与公共曲库）。
 
-另外接入两个**第三方曲库目录**（只读检索，用于"按歌名找谱"）：
-[shushu.fan/fun/harmonica](https://shushu.fan/fun/harmonica)（三角洲鼠鼠工具 · 口琴曲谱）与
-[delta-test.shallow.ink/harmonica](https://delta-test.shallow.ink/harmonica)（DeltaForce 口琴曲库）。
-两者都**只用各家公开接口/公开页面**：shallow 走它自己的匿名令牌（`POST /api/v1/auth/anonymous-token`，
-带一个本地随机设备指纹）；shushu 只解析其公开页面上的目录信息。**不绕过登录、不伪造凭证、不转载谱面本体**。
+联网检索使用 shallow 的匿名公开目录、harmonica-visualizer 的公开文件索引以及 JE 的 GitHub 标题搜索。
+只按需下载上游公开的兼容文本谱，不绕过登录或访问限制；目录缓存和下载曲谱不随本次更新分发。
+JE 音高谱不自动填充时值；shallow 不自动抓取谱面媒体。详见 [曲源维护说明](docs/曲源维护.md)。
 
 `refs/` 下的快照仅供对照、**不随仓库分发**；详见 [`docs/来源出处与许可.md`](docs/来源出处与许可.md)。
 本仓库代码：MIT（见 `LICENSE`）。
